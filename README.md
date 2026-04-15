@@ -76,19 +76,43 @@ pip install -r requirements.txt
 
 ## How to Run
 
-### Option A — Download live data from Yahoo Finance
+There are two ways to use this project: a **web UI** (recommended for beginners) or a **command line**.
 
-This is the easiest way to get started. Just pick a ticker symbol (e.g. `AAPL` for Apple, `MSFT` for Microsoft):
+---
+
+### Option 1 — Web UI (Streamlit)
+
+The easiest way to use the project. Opens an interactive app in your browser where you can fill in all parameters and see results as charts and tables.
+
+```bash
+streamlit run app.py
+```
+
+A browser tab will open automatically at `http://localhost:8501`.
+
+**What you can do in the UI:**
+- Enter any ticker symbol (e.g. `AAPL`, `MSFT`, `TSLA`)
+- Choose a historical period from a dropdown (`6mo`, `1y`, `2y`, `5y`)
+- Adjust the number of states and simulation horizon with sliders
+- Set a random seed for reproducible results
+- Click **Run Simulation** to see:
+  - A line chart of the simulated price path
+  - Start price, end price, and simulated % change metrics
+  - Current and most likely next market state
+  - Transition matrix with color gradient
+  - State definitions table (return range, mean return, observation count)
+
+---
+
+### Option 2 — Command Line
+
+**Download live data from Yahoo Finance:**
 
 ```bash
 python3 markov_stock_prediction.py --ticker AAPL --period 1y --states 5 --horizon 10
 ```
 
-This downloads the last 1 year of Apple closing prices, fits a 5-state Markov model, and simulates the next 10 days.
-
-### Option B — Use your own CSV file
-
-If you already have a CSV with historical prices, point the script at it:
+**Use your own CSV file:**
 
 ```bash
 python3 markov_stock_prediction.py --csv data/prices.csv
@@ -112,7 +136,7 @@ python3 markov_stock_prediction.py --csv data/prices.csv --date-column date --pr
 
 ---
 
-## All Parameters
+## CLI Parameters
 
 | Flag | Default | What it does |
 |---|---|---|
@@ -128,8 +152,6 @@ python3 markov_stock_prediction.py --csv data/prices.csv --date-column date --pr
 ---
 
 ## Understanding the Output
-
-Running the script prints several sections:
 
 **State bins** — The return thresholds that define each state. For example:
 ```
@@ -169,6 +191,7 @@ stock-market-prediction/
 │   ├── model.py             # MarkovStockModel — high-level fit/predict/simulate API
 │   └── summary.py           # Print a human-readable model summary
 ├── markov_stock_prediction.py   # CLI entry point — thin wrapper around the package
+├── app.py                       # Streamlit web UI
 ├── requirements.txt             # Python dependencies
 └── README.md                    # This file
 ```
@@ -228,3 +251,4 @@ This project is intended **for educational and research purposes ONLY**.
 | `numpy` | Numerical computations (matrix math, quantiles) |
 | `pandas` | Data loading and manipulation |
 | `yfinance` | Downloading stock price data from Yahoo Finance |
+| `streamlit` | Web UI — interactive browser-based interface |
