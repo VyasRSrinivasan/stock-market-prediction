@@ -252,3 +252,9 @@ This project is intended **for educational and research purposes ONLY**.
 | `pandas` | Data loading and manipulation |
 | `yfinance` | Downloading stock price data from Yahoo Finance |
 | `streamlit` | Web UI — interactive browser-based interface |
+
+
+## Streamlit App
+
+Run the app: 
+https://vyasrsrinivasan-stock-market-prediction-app-coukef.streamlit.app/
