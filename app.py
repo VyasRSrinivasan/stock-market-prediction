@@ -54,7 +54,7 @@ with st.sidebar:
         help="Fix this value to get the same simulation output each run.",
     )
 
-    run = st.button("Run Simulation", type="primary", use_container_width=True)
+    run = st.button("Run Simulation", type="primary", width="stretch")
 
 # ── Main panel ────────────────────────────────────────────────────────────────
 if not run:
@@ -127,7 +127,7 @@ tm_df = pd.DataFrame(
     index=[f"State {i}" for i in range(n_states)],
     columns=[f"State {i}" for i in range(n_states)],
 ).round(3)
-st.dataframe(tm_df.style.background_gradient(cmap="Blues", axis=1), use_container_width=True)
+st.dataframe(tm_df, width="stretch")
 
 st.divider()
 
@@ -142,7 +142,7 @@ for i in range(n_states):
         "Mean Return": f"{model.state_mean_returns[i]:.5f}",
         "Observations": int(model.initial_state_counts[i]),
     })
-st.dataframe(pd.DataFrame(state_rows).set_index("State"), use_container_width=True)
+st.dataframe(pd.DataFrame(state_rows).set_index("State"), width="stretch")
 
 st.divider()
 st.caption("This tool is for educational purposes only. Not financial advice.")
