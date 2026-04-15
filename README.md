@@ -257,4 +257,5 @@ This project is intended **for educational and research purposes ONLY**.
 ## Streamlit App
 
 Run the app: 
-https://vyasrsrinivasan-stock-market-prediction-app-coukef.streamlit.app/
+
+[Stock Market Prediction Simulator](https://vyasrsrinivasan-stock-market-prediction-app-coukef.streamlit.app/)
