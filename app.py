@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import altair as alt
 
 from markov import (
     MarkovStockModel,
@@ -8,9 +9,20 @@ from markov import (
     print_model_summary,
 )
 
-st.set_page_config(page_title="Markov Stock Predictor", layout="centered")
+st.set_page_config(page_title="Stock Predictor", layout="centered")
 
-st.title("Markov Chain Stock Price Simulator")
+st.markdown("""
+    <style>
+    [data-testid="stMetricValue"] { font-size: 1.8rem; }
+    [data-testid="stMetricDelta"] { font-size: 1.2rem; }
+    [data-testid="stMetricLabel"] { font-size: 1rem; }
+    </style>
+""", unsafe_allow_html=True)
+
+col_l, col_m, col_r = st.columns([1, 2, 1])
+with col_m:
+    st.image("./images/StockPricePredictionImage.png", width=200)
+st.title("Stock Price Prediction Simulator")
 st.caption("An educational tool for simulating short-term stock price paths using Markov chains.")
 
 # ── Sidebar inputs ────────────────────────────────────────────────────────────
@@ -19,7 +31,7 @@ with st.sidebar:
 
     ticker = st.text_input(
         "Ticker Symbol",
-        value="AAPL",
+        value=",
         help="Stock ticker symbol (e.g. AAPL, MSFT, TSLA)",
     ).upper().strip()
 
@@ -95,18 +107,45 @@ st.success(f"Model fitted on **{len(prices)}** trading days of **{ticker}** data
 
 # Simulated price chart
 st.subheader("Simulated Price Path")
+sim_high = float(simulation.max())
+sim_low = float(simulation.min())
 sim_df = pd.DataFrame({
     "Day": range(len(simulation)),
     "Price": simulation.values,
 })
-sim_df = sim_df.set_index("Day")
-st.line_chart(sim_df)
+y_min = sim_low * 0.99
+y_max = sim_high * 1.01
+
+line = (
+    alt.Chart(sim_df)
+    .mark_line(color="#1f77b4")
+    .encode(
+        x=alt.X("Day:Q", axis=alt.Axis(tickMinStep=1)),
+        y=alt.Y("Price:Q", scale=alt.Scale(domain=[y_min, y_max])),
+    )
+)
+high_rule = (
+    alt.Chart(pd.DataFrame({"y": [sim_high], "label": ["High"]}))
+    .mark_rule(color="green", strokeDash=[4, 4])
+    .encode(y="y:Q")
+)
+low_rule = (
+    alt.Chart(pd.DataFrame({"y": [sim_low], "label": ["Low"]}))
+    .mark_rule(color="red", strokeDash=[4, 4])
+    .encode(y="y:Q")
+)
+chart = (line + high_rule + low_rule).properties(width="container")
+st.altair_chart(chart, use_container_width=True)
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Start Price", f"${float(prices.iloc[-1]):.2f}")
+col1.metric("Previous Day Closing Price", f"${float(prices.iloc[-1]):.2f}")
 col2.metric("Simulated End Price", f"${simulation.iloc[-1]:.2f}")
 delta = simulation.iloc[-1] - float(prices.iloc[-1])
 col3.metric("Simulated Change", f"${delta:.2f}", delta=f"{delta / float(prices.iloc[-1]) * 100:.1f}%")
+
+col4, col5 = st.columns(2)
+col4.metric("Simulated High", f"${sim_high:.2f}", delta=f"{(sim_high / float(prices.iloc[-1]) - 1) * 100:.1f}%")
+col5.metric("Simulated Low", f"${sim_low:.2f}", delta=f"{(sim_low / float(prices.iloc[-1]) - 1) * 100:.1f}%")
 
 st.divider()
 

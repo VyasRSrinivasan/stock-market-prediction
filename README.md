@@ -8,7 +8,7 @@ Here is the basic idea:
 1. It downloads (or reads) historical stock closing prices.
 2. It groups each day's return into a "state" (e.g. big drop, small drop, flat, small gain, big gain).
 3. It counts how often the market moves from one state to another — this becomes the **transition matrix**.
-4. It uses that matrix to randomly simulate plausible future price paths.
+4. It uses that matrix to randomly simulate probable future price paths.
 
 ---
 
@@ -16,7 +16,9 @@ Here is the basic idea:
 
 Predicting stock prices is one of the hardest problems in finance. Markets are noisy, influenced by countless unpredictable factors, and constantly changing. Most simple models fail because they assume prices follow a neat pattern — but in reality, daily returns are highly variable.
 
-This project tackles a narrower question: **can we model the statistical behavior of daily returns using a Markov chain, and use that model to simulate plausible short-term price paths?**
+This project tackles a narrower question: **can we model the statistical behavior of daily returns using a Markov chain, and use that model to simulate probable short-term price paths?**
+
+A **Markov chain** is a mathematical model that describes a sequence of events where the probability of each event depends only on the state of the previous event — not on anything that came before it. This is known as the "memoryless" property. For example, if the stock market had a bad day today, a Markov chain estimates the probability of tomorrow being good, flat, or bad — purely based on what tends to follow a bad day historically, ignoring everything else. Each possible condition (bad day, good day, etc.) is called a **state**, and the likelihood of moving between states is captured in a **transition matrix**.
 
 Rather than trying to predict exact future prices (which is not reliably possible), the goal is to capture the structure of how return "regimes" tend to transition — for example, whether a bad day is more likely to be followed by a recovery or another bad day.
 
