@@ -31,7 +31,7 @@ with st.sidebar:
 
     ticker = st.text_input(
         "Ticker Symbol",
-        value=",
+        value="AAPL",
         help="Stock ticker symbol (e.g. AAPL, MSFT, TSLA)",
     ).upper().strip()
 
