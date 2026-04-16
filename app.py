@@ -7,6 +7,11 @@ from markov import (
     MarkovStockModel,
     download_price_series,
     print_model_summary,
+    assign_states,
+    compute_transition_matrix,
+    compute_state_mean_returns,
+    compute_initial_state_counts,
+    run_rag_analysis,
 )
 
 st.set_page_config(page_title="Stock Predictor", layout="centered")
@@ -42,13 +47,22 @@ with st.sidebar:
         help="How far back to fetch price data from Yahoo Finance.",
     )
 
-    n_states = st.slider(
-        "Number of States",
-        min_value=3,
-        max_value=10,
-        value=5,
-        help="More states = finer return categories. 5 is a good default.",
+    bucket_mode = st.radio(
+        "State Bucketing",
+        options=["Quantile", "Volume (Low / Average / High)"],
+        help="Quantile splits states evenly by return percentile. Volume uses 3 fixed buckets based on the mean return.",
     )
+    if bucket_mode == "Quantile":
+        n_states = st.slider(
+            "Number of States",
+            min_value=3,
+            max_value=10,
+            value=5,
+            help="More states = finer return categories. 5 is a good default.",
+        )
+    else:
+        n_states = 3
+        st.caption("3 fixed states: **Low** (below mean), **Average** (near mean), **High** (above mean).")
 
     horizon = st.slider(
         "Simulation Horizon (days)",
@@ -68,6 +82,20 @@ with st.sidebar:
 
     run = st.button("Run Simulation", type="primary", width="stretch")
 
+    st.divider()
+    st.header("AI Analysis (optional)")
+    anthropic_api_key = st.text_input(
+        "Anthropic API Key",
+        type="password",
+        help="Paste your Anthropic API key to enable AI-powered news analysis. Leave blank to skip.",
+    )
+    run_rag = st.checkbox(
+        "Generate AI Analysis",
+        value=False,
+        disabled=not anthropic_api_key,
+        help="Uses Claude + recent news to contextualise the simulation. Requires an API key.",
+    )
+
 # ── Main panel ────────────────────────────────────────────────────────────────
 if not run:
     st.info("Set your parameters in the sidebar and click **Run Simulation**.")
@@ -84,14 +112,35 @@ with st.spinner(f"Downloading data for {ticker}..."):
         st.error(f"Could not download data for **{ticker}**: {e}")
         st.stop()
 
+returns = prices.pct_change().dropna()
+
 with st.spinner("Fitting Markov model..."):
     try:
-        model = MarkovStockModel.fit(prices, n_states=n_states)
+        if bucket_mode == "Volume (Low / Average / High)":
+            mean_ret = float(returns.mean())
+            std_ret = float(returns.std())
+            state_bins = np.array([
+                float(returns.min()),
+                mean_ret - 0.5 * std_ret,
+                mean_ret + 0.5 * std_ret,
+                float(returns.max()),
+            ])
+            states_arr = assign_states(returns, state_bins)
+            model = MarkovStockModel(
+                n_states=3,
+                transition_matrix=compute_transition_matrix(states_arr, 3),
+                state_bins=state_bins,
+                state_mean_returns=compute_state_mean_returns(returns, states_arr, 3),
+                initial_state_counts=compute_initial_state_counts(states_arr, 3),
+            )
+            state_labels = ["Low", "Average", "High"]
+        else:
+            model = MarkovStockModel.fit(prices, n_states=n_states)
+            state_labels = [f"State {i}" for i in range(n_states)]
     except ValueError as e:
         st.error(str(e))
         st.stop()
 
-returns = prices.pct_change().dropna()
 current_return = float(returns.iloc[-1])
 current_state = model.state_for_return(current_return)
 
@@ -152,8 +201,8 @@ st.divider()
 # Current state info
 st.subheader("Current Market State")
 col_a, col_b = st.columns(2)
-col_a.metric("Current State", current_state)
-col_b.metric("Most Likely Next State", model.most_likely_next_state(current_state))
+col_a.metric("Current State", state_labels[current_state])
+col_b.metric("Most Likely Next State", state_labels[model.most_likely_next_state(current_state)])
 st.caption(f"Current state mean return: `{model.state_mean_returns[current_state]:.5f}`")
 
 st.divider()
@@ -163,8 +212,8 @@ st.subheader("Transition Matrix")
 st.caption("Each cell shows the probability of moving from row-state to column-state on the next day.")
 tm_df = pd.DataFrame(
     model.transition_matrix,
-    index=[f"State {i}" for i in range(n_states)],
-    columns=[f"State {i}" for i in range(n_states)],
+    index=state_labels,
+    columns=state_labels,
 ).round(3)
 st.dataframe(tm_df, width="stretch")
 
@@ -176,7 +225,7 @@ st.caption("Each state covers a range of daily returns, split by quantile.")
 state_rows = []
 for i in range(n_states):
     state_rows.append({
-        "State": i,
+        "State": state_labels[i],
         "Return Range": f"{model.state_bins[i]:.4f}  →  {model.state_bins[i + 1]:.4f}",
         "Mean Return": f"{model.state_mean_returns[i]:.5f}",
         "Observations": int(model.initial_state_counts[i]),
@@ -184,4 +233,54 @@ for i in range(n_states):
 st.dataframe(pd.DataFrame(state_rows).set_index("State"), width="stretch")
 
 st.divider()
+
+# ── AI Analysis (RAG) ─────────────────────────────────────────────────────────
+if run_rag and anthropic_api_key:
+    st.subheader("AI Analysis")
+    st.caption(
+        "Claude reads recent news about this ticker and combines it with the Markov model "
+        "output to produce an educational summary. This is not financial advice."
+    )
+    with st.spinner("Fetching news and generating analysis..."):
+        try:
+            result = run_rag_analysis(
+                ticker=ticker,
+                api_key=anthropic_api_key,
+                current_price=float(prices.iloc[-1]),
+                simulated_end_price=float(simulation.iloc[-1]),
+                sim_change_pct=float(simulation.iloc[-1] / float(prices.iloc[-1]) - 1) * 100,
+                sim_high=sim_high,
+                sim_low=sim_low,
+                current_state_label=state_labels[current_state],
+                next_state_label=state_labels[model.most_likely_next_state(current_state)],
+                horizon=horizon,
+            )
+            st.markdown(result["analysis"])
+
+            sources = result["sources"]
+            if sources:
+                with st.expander(f"Sources ({len(sources)} articles used)"):
+                    for i, src in enumerate(sources, start=1):
+                        title = src["title"] or "Untitled"
+                        url = src["url"]
+                        summary = src["text"][:280].rstrip() + ("…" if len(src["text"]) > 280 else "")
+                        if url:
+                            st.markdown(f"**{i}. [{title}]({url})**")
+                        else:
+                            st.markdown(f"**{i}. {title}**")
+                        st.caption(summary)
+                        if i < len(sources):
+                            st.divider()
+        except ImportError as e:
+            st.warning(
+                f"Missing dependency: {e}. "
+                "Install with: `pip install anthropic chromadb sentence-transformers`"
+            )
+        except Exception as e:
+            st.error(f"AI analysis failed: {e}")
+    st.divider()
+elif run_rag and not anthropic_api_key:
+    st.info("Enter your Anthropic API key in the sidebar to enable AI analysis.")
+    st.divider()
+
 st.caption("This tool is for educational purposes only. Not financial advice.")
