@@ -2,13 +2,14 @@
 
 ## What This Project Does
 
-This project uses a **Markov chain** model to simulate how a stock's price might move in the future, based on its past daily returns. It is a learning tool — not financial advice.
+This project uses a **Markov chain** model to simulate how a stock's price might move in the future, based on its past daily returns. It also includes an optional **AI Analysis** feature that fetches recent news about the ticker and uses Claude (Anthropic's AI) to produce an educational summary alongside the simulation. It is a learning tool — not financial advice.
 
 Here is the basic idea:
-1. It downloads (or reads) historical stock closing prices.
+1. It downloads historical stock closing prices from Yahoo Finance.
 2. It groups each day's return into a "state" (e.g. big drop, small drop, flat, small gain, big gain).
 3. It counts how often the market moves from one state to another — this becomes the **transition matrix**.
 4. It uses that matrix to randomly simulate probable future price paths.
+5. Optionally, it retrieves recent news headlines and passes them to Claude to generate a contextual analysis.
 
 ---
 
@@ -29,6 +30,7 @@ Rather than trying to predict exact future prices (which is not reliably possibl
 - Represent daily stock returns as a sequence of discrete states (e.g. large loss, small loss, flat, small gain, large gain).
 - Learn a **transition matrix** from historical data that captures how likely the market is to move from one state to another.
 - Use the fitted model to **simulate future price paths** by randomly sampling state transitions.
+- Optionally layer in **AI-powered news analysis** using the Claude API and recent headlines.
 - Provide a clean, beginner-friendly example of applying Markov chains to financial time series data.
 
 ---
@@ -47,6 +49,8 @@ You also need `pip`, which comes bundled with Python. If you are unsure, run:
 pip --version
 ```
 
+> **conda users:** The base Anaconda environment ships with Python 3.7, which is too old for some dependencies. Use a conda environment with Python 3.8+ (see Installation below).
+
 ---
 
 ## Installation
@@ -58,14 +62,21 @@ git clone https://github.com/your-username/stock-market-prediction.git
 cd stock-market-prediction
 ```
 
-**2. (Optional but recommended) Create a virtual environment**
+**2. Create an environment with Python 3.8+**
 
-A virtual environment keeps this project's dependencies separate from the rest of your system.
+*Option A — virtual environment (recommended for most users):*
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate        # Mac / Linux
 venv\Scripts\activate           # Windows
+```
+
+*Option B — conda environment:*
+
+```bash
+conda create -n stockenv python=3.10
+conda activate stockenv
 ```
 
 **3. Install dependencies**
@@ -95,14 +106,21 @@ A browser tab will open automatically at `http://localhost:8501`.
 **What you can do in the UI:**
 - Enter any ticker symbol (e.g. `AAPL`, `MSFT`, `TSLA`)
 - Choose a historical period from a dropdown (`6mo`, `1y`, `2y`, `5y`)
-- Adjust the number of states and simulation horizon with sliders
+- Choose a **state bucketing mode**:
+  - **Quantile** — splits states evenly by return percentile; adjust the number of states (3–10) with a slider
+  - **Volume (Low / Average / High)** — uses 3 fixed buckets based on the mean return (below mean, near mean, above mean)
+- Adjust the simulation horizon with a slider (5–60 trading days)
 - Set a random seed for reproducible results
 - Click **Run Simulation** to see:
-  - A line chart of the simulated price path
-  - Start price, end price, and simulated % change metrics
+  - A line chart of the simulated price path with high/low reference lines
+  - Start price, end price, simulated % change, simulated high, and simulated low
   - Current and most likely next market state
-  - Transition matrix with color gradient
+  - Transition matrix
   - State definitions table (return range, mean return, observation count)
+
+**Optional — AI Analysis:**
+
+Paste your [Anthropic API key](https://console.anthropic.com/) into the sidebar, tick **Generate AI Analysis**, then run the simulation. Claude will read the latest news about the ticker, combine it with the Markov model output, and produce a 3–5 paragraph educational summary. A collapsible **Sources** section below the analysis lists every article used, with clickable links.
 
 ---
 
@@ -174,7 +192,11 @@ Row 0, column 4 = 0.300 means: after a very bad day, there is a 30% chance the n
 
 **Mean return per state** — The average daily return observed in each state historically.
 
-**Simulated price path** — A sequence of prices starting from today's price, projected forward day by day using random state transitions.
+**Simulated price path** — A sequence of prices starting from today's closing price, projected forward day by day using random state transitions.
+
+**Simulated high / low** — The maximum and minimum prices reached during the simulated path, shown as dashed reference lines on the chart and as metric cards.
+
+**AI Analysis** *(optional)* — A 3–5 paragraph summary written by Claude that interprets the model output in light of recent news. A Sources section lists the news articles used.
 
 ---
 
@@ -191,7 +213,8 @@ stock-market-prediction/
 │   ├── transition.py        # Build the transition matrix and per-state statistics
 │   ├── simulation.py        # Simulate future price paths via state transitions
 │   ├── model.py             # MarkovStockModel — high-level fit/predict/simulate API
-│   └── summary.py           # Print a human-readable model summary
+│   ├── summary.py           # Print a human-readable model summary
+│   └── rag.py               # AI Analysis — news fetching and Claude API integration
 ├── markov_stock_prediction.py   # CLI entry point — thin wrapper around the package
 ├── app.py                       # Streamlit web UI
 ├── requirements.txt             # Python dependencies
@@ -208,6 +231,7 @@ stock-market-prediction/
 | `simulation.py` | Steps forward day by day — randomly sampling the next state from the transition distribution and compounding the price by that state's mean return. |
 | `model.py` | `MarkovStockModel` dataclass that ties all modules together. Call `.fit()` to train, then `.simulate_prices()`, `.predict_next_state()`, or `.most_likely_next_state()` to use it. |
 | `summary.py` | Prints state bins, the full transition matrix, and per-state mean returns in a readable format. |
+| `rag.py` | Fetches recent news via yfinance, builds a prompt combining the news with Markov model output, and calls the Claude API to generate an educational analysis. |
 
 ---
 
@@ -220,15 +244,33 @@ In this project:
 - The **transition matrix** is learned from historical data and captures patterns like "after a great day, what usually happens next?"
 - During simulation, the model randomly picks the next state according to those learned probabilities, then computes the next price from the state's average return.
 
-Because the model is stochastic (random), running it twice with different `--seed` values will give different simulated paths. This reflects the genuine uncertainty in future prices.
+**State bucketing modes:**
+- **Quantile** — divides all historical returns into N equal-sized groups by percentile. More states give a finer picture of the return distribution.
+- **Volume (Low / Average / High)** — uses 3 fixed buckets relative to the historical mean return. Returns more than half a standard deviation below the mean are *Low*, within half a standard deviation are *Average*, and above are *High*.
+
+Because the model is stochastic (random), running it twice with different seed values will give different simulated paths. This reflects the genuine uncertainty in future prices.
+
+---
+
+## AI Analysis (Optional)
+
+The **AI Analysis** feature uses Retrieval-Augmented Generation (RAG) to combine the Markov model's quantitative output with qualitative context from the news:
+
+1. **News fetching** — `rag.py` pulls the latest headlines and summaries for the ticker from Yahoo Finance.
+2. **Prompt construction** — All articles are included in a structured prompt alongside the model's simulation results (current price, simulated end price, state labels, etc.).
+3. **Claude API call** — The prompt is sent to `claude-opus-4-6` with adaptive thinking enabled. Claude synthesizes the quantitative and qualitative signals into a 3–5 paragraph analysis.
+4. **Sources** — The articles used are surfaced in a collapsible Sources section in the UI, each with a clickable link to the original article.
+
+To use this feature you need a free Anthropic API key from [console.anthropic.com](https://console.anthropic.com/).
 
 ---
 
 ## Limitations
 
 - This is a **simplified educational model**. Real markets are far more complex.
-- The model only uses past return history — it ignores news, earnings, macroeconomic events, etc.
+- The Markov model only uses past return history — it ignores news, earnings, macroeconomic events, and other factors.
 - Simulated paths are one possible scenario, not a forecast.
+- The AI Analysis reflects recent headlines but cannot access real-time data, predict future events, or account for information not present in the news summaries.
 - **Do NOT use this for real investment decisions.**
 
 ---
@@ -239,6 +281,7 @@ This project is intended **for educational and research purposes ONLY**.
 
 - Nothing in this repository constitutes financial, investment, or trading advice.
 - Simulated price paths are generated from a simplified statistical model and do not represent predictions of actual future prices.
+- AI-generated analysis is produced by a language model and may contain errors or omissions.
 - Past market behavior does NOT guarantee future results.
 - The authors are NOT responsible for any financial decisions made based on this tool or its output.
 
@@ -252,12 +295,14 @@ This project is intended **for educational and research purposes ONLY**.
 |---|---|
 | `numpy` | Numerical computations (matrix math, quantiles) |
 | `pandas` | Data loading and manipulation |
-| `yfinance` | Downloading stock price data from Yahoo Finance |
+| `yfinance` | Downloading stock price data and news from Yahoo Finance |
 | `streamlit` | Web UI — interactive browser-based interface |
+| `anthropic` | Claude API client — used for the optional AI Analysis feature |
 
+---
 
 ## Streamlit App
 
-Run the app: 
+Run the app:
 
 [Stock Market Prediction Simulator](https://vyasrsrinivasan-stock-market-prediction-app-coukef.streamlit.app/)
