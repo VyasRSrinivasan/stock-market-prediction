@@ -53,6 +53,34 @@ pip --version
 
 ---
 
+## Obtaining an Anthropic API Key
+
+An API key is only needed for the optional **AI Analysis** feature. The Markov chain simulation works without one.
+
+**1. Create a free Anthropic account**
+
+Go to [console.anthropic.com](https://console.anthropic.com/) and sign up with your email address.
+
+**2. Navigate to API Keys**
+
+After logging in, click your account name in the top-right corner and select **API Keys**, or go directly to [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
+
+**3. Create a new key**
+
+Click **Create Key**, give it a name (e.g. `stock-predictor`), and click **Create Key** again. Copy the key immediately — it is only shown once.
+
+**4. Add credits (if needed)**
+
+New accounts include a small free credit. For ongoing use, add a payment method under **Billing** at [console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing). The AI Analysis feature makes two lightweight API calls per simulation run (one for sentiment, one for the full analysis), so costs are minimal.
+
+**5. Paste the key into the app**
+
+In the sidebar under **AI Analysis (optional)**, paste your key into the **Anthropic API Key** field. It is masked as a password and is never stored beyond your browser session.
+
+> **Security note:** Never commit your API key to version control. If you want to set it as an environment variable instead, you can read it in `rag.py` via `os.environ.get("ANTHROPIC_API_KEY")` and skip the sidebar input.
+
+---
+
 ## Installation
 
 **1. Clone or download this repository**
