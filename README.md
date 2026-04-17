@@ -113,14 +113,25 @@ A browser tab will open automatically at `http://localhost:8501`.
 - Set a random seed for reproducible results
 - Click **Run Simulation** to see:
   - A line chart of the simulated price path with high/low reference lines
-  - Start price, end price, simulated % change, simulated high, and simulated low
+  - Start price, end price, and simulated % change
+  - **Simulated High** (value and % shown in green) and **Simulated Low** (value and % shown in red, with highlighted badges)
   - Current and most likely next market state
   - Transition matrix
   - State definitions table (return range, mean return, observation count)
 
-**Optional — AI Analysis:**
+**Optional — AI Analysis (requires Anthropic API key):**
 
-Paste your [Anthropic API key](https://console.anthropic.com/) into the sidebar, tick **Generate AI Analysis**, then run the simulation. Claude will read the latest news about the ticker, combine it with the Markov model output, and produce a 3–5 paragraph educational summary. A collapsible **Sources** section below the analysis lists every article used, with clickable links.
+The AI Analysis feature is entirely opt-in and does not affect the simulation unless explicitly enabled:
+
+1. Paste your [Anthropic API key](https://console.anthropic.com/) into the sidebar under **AI Analysis (optional)**.
+2. Tick **Generate AI Analysis**.
+3. Click **Run Simulation**.
+
+When enabled, two things happen before results are shown:
+- **News sentiment classification** — Claude reads the latest headlines for the ticker and classifies sentiment as bearish (−1), neutral (0), or bullish (+1). A banner explains whether and how the simulation's starting state was adjusted based on this signal.
+- **Full AI analysis** — Claude combines the Markov model output with the news to produce a 3–5 paragraph educational summary. A collapsible **Sources** section lists every article used, with clickable links.
+
+If no API key is entered or the checkbox is left unticked, the simulation runs as a pure Markov chain with no external data or Claude calls.
 
 ---
 
@@ -194,9 +205,9 @@ Row 0, column 4 = 0.300 means: after a very bad day, there is a 30% chance the n
 
 **Simulated price path** — A sequence of prices starting from today's closing price, projected forward day by day using random state transitions.
 
-**Simulated high / low** — The maximum and minimum prices reached during the simulated path, shown as dashed reference lines on the chart and as metric cards.
+**Simulated high / low** — The maximum and minimum prices reached during the simulated path, shown as dashed green/red reference lines on the chart. The metric cards display the high value and percentage in green and the low value and percentage in red (with a highlighted badge) for quick visual scanning.
 
-**AI Analysis** *(optional)* — A 3–5 paragraph summary written by Claude that interprets the model output in light of recent news. A Sources section lists the news articles used.
+**AI Analysis** *(optional, requires API key + checkbox)* — A 3–5 paragraph summary written by Claude that interprets the model output in light of recent news. Includes a sentiment banner explaining any starting-state adjustment and a Sources section with links to every article used. The pure Markov simulation is unaffected when this feature is disabled.
 
 ---
 
@@ -254,14 +265,19 @@ Because the model is stochastic (random), running it twice with different seed v
 
 ## AI Analysis (Optional)
 
-The **AI Analysis** feature uses Retrieval-Augmented Generation (RAG) to combine the Markov model's quantitative output with qualitative context from the news:
+The **AI Analysis** feature is fully opt-in — the simulation runs as a pure Markov chain until you explicitly enable it. It uses Retrieval-Augmented Generation (RAG) to combine the model's quantitative output with qualitative context from recent news.
 
-1. **News fetching** — `rag.py` pulls the latest headlines and summaries for the ticker from Yahoo Finance.
-2. **Prompt construction** — All articles are included in a structured prompt alongside the model's simulation results (current price, simulated end price, state labels, etc.).
-3. **Claude API call** — The prompt is sent to `claude-opus-4-6` with adaptive thinking enabled. Claude synthesizes the quantitative and qualitative signals into a 3–5 paragraph analysis.
-4. **Sources** — The articles used are surfaced in a collapsible Sources section in the UI, each with a clickable link to the original article.
+**How to enable:** enter your Anthropic API key in the sidebar, tick **Generate AI Analysis**, then click Run Simulation.
 
-To use this feature you need a free Anthropic API key from [console.anthropic.com](https://console.anthropic.com/).
+**What happens when enabled:**
+
+1. **News sentiment classification** — `rag.py` fetches recent headlines via yfinance and calls `claude-opus-4-6` using tool use to return a structured sentiment score (−1 bearish, 0 neutral, +1 bullish) and a one-sentence explanation. If bearish, the simulation starts in the lowest state; if bullish, in the highest state; if neutral, the return-based state is used unchanged. A colour-coded banner in the UI explains the adjustment.
+2. **News fetching** — The same articles retrieved for sentiment are reused (no second network call).
+3. **Prompt construction** — All articles are included in a structured prompt alongside the model's simulation results (current price, simulated end price, news-adjusted state labels, etc.).
+4. **Claude API call** — The prompt is sent to `claude-opus-4-6` with adaptive thinking enabled. Claude synthesises the quantitative and qualitative signals into a 3–5 paragraph analysis.
+5. **Sources** — The articles used are surfaced in a collapsible Sources section in the UI, each with a clickable link to the original article.
+
+To use this feature you need an Anthropic API key from [console.anthropic.com](https://console.anthropic.com/).
 
 ---
 

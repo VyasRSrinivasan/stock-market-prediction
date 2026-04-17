@@ -11,6 +11,7 @@ from markov import (
     compute_transition_matrix,
     compute_state_mean_returns,
     compute_initial_state_counts,
+    get_news_sentiment,
     run_rag_analysis,
 )
 
@@ -28,7 +29,7 @@ col_l, col_m, col_r = st.columns([1, 2, 1])
 with col_m:
     st.image("./images/StockPricePredictionImage.png", width=200)
 st.title("Stock Price Prediction Simulator")
-st.caption("An educational tool for simulating short-term stock price paths using Markov chains.")
+st.markdown('<p style="font-size:1.1rem; color:#1f77b4;">An educational tool for simulating short-term stock price paths using Markov chains.</p>', unsafe_allow_html=True)
 
 # ── Sidebar inputs ────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -144,15 +145,57 @@ with st.spinner("Fitting Markov model..."):
 current_return = float(returns.iloc[-1])
 current_state = model.state_for_return(current_return)
 
+# ── News-conditioned starting state ───────────────────────────────────────────
+sentiment_data = None
+sim_start_state = current_state
+
+if run_rag and anthropic_api_key:
+    with st.spinner("Analyzing news sentiment to condition simulation..."):
+        try:
+            sentiment_data = get_news_sentiment(ticker, anthropic_api_key)
+            s = sentiment_data["sentiment"]
+            if s == -1:
+                sim_start_state = 0
+            elif s == 1:
+                sim_start_state = n_states - 1
+            # s == 0: keep current_state
+        except Exception:
+            sentiment_data = None  # fall back silently
+
 simulation = model.simulate_prices(
     start_price=float(prices.iloc[-1]),
-    start_state=current_state,
+    start_state=sim_start_state,
     horizon=horizon,
     random_seed=int(seed),
 )
 
 # ── Results ───────────────────────────────────────────────────────────────────
 st.success(f"Model fitted on **{len(prices)}** trading days of **{ticker}** data.")
+
+if sentiment_data:
+    s = sentiment_data["sentiment"]
+    raw_label = state_labels[current_state]
+    adj_label = state_labels[sim_start_state]
+    if s == -1:
+        st.warning(
+            f"**Bearish news sentiment detected.** "
+            f"Simulation starts in **{adj_label}** (lowest state) "
+            f"instead of the return-based state **{raw_label}**. "
+            f"_{sentiment_data['reasoning']}_"
+        )
+    elif s == 1:
+        st.success(
+            f"**Bullish news sentiment detected.** "
+            f"Simulation starts in **{adj_label}** (highest state) "
+            f"instead of the return-based state **{raw_label}**. "
+            f"_{sentiment_data['reasoning']}_"
+        )
+    else:
+        st.info(
+            f"**Neutral news sentiment.** "
+            f"Simulation starts in the return-based state **{raw_label}**. "
+            f"_{sentiment_data['reasoning']}_"
+        )
 
 # Simulated price chart
 st.subheader("Simulated Price Path")
@@ -193,8 +236,24 @@ delta = simulation.iloc[-1] - float(prices.iloc[-1])
 col3.metric("Simulated Change", f"${delta:.2f}", delta=f"{delta / float(prices.iloc[-1]) * 100:.1f}%")
 
 col4, col5 = st.columns(2)
-col4.metric("Simulated High", f"${sim_high:.2f}", delta=f"{(sim_high / float(prices.iloc[-1]) - 1) * 100:.1f}%")
-col5.metric("Simulated Low", f"${sim_low:.2f}", delta=f"{(sim_low / float(prices.iloc[-1]) - 1) * 100:.1f}%")
+low_pct = (sim_low / float(prices.iloc[-1]) - 1) * 100
+high_pct = (sim_high / float(prices.iloc[-1]) - 1) * 100
+col4.markdown(f"""
+    <div>
+        <div style="font-size:1rem; color:inherit">Simulated Low</div>
+        <div style="font-size:1.8rem; font-weight:600; color:#6f0000">${sim_low:.2f}</div>
+        <div style="display:inline-block; font-size:1.2rem; color:#d62728;
+                    background-color:#ffd7d7; border-radius:4px; padding:1px 6px">{low_pct:+.1f}%</div>
+    </div>
+""", unsafe_allow_html=True)
+col5.markdown(f"""
+    <div>
+        <div style="font-size:1rem; color:inherit">Simulated High</div>
+        <div style="font-size:1.8rem; font-weight:600; color:#306844">${sim_high:.2f}</div>
+        <div style="display:inline-block; font-size:1.2rem; color:#2ca02c;
+                    background-color:#d4edda; border-radius:4px; padding:1px 6px">{high_pct:+.1f}%</div>
+    </div>
+""", unsafe_allow_html=True)
 
 st.divider()
 
@@ -239,7 +298,7 @@ if run_rag and anthropic_api_key:
     st.subheader("AI Analysis")
     st.caption(
         "Claude reads recent news about this ticker and combines it with the Markov model "
-        "output to produce an educational summary. This is not financial advice."
+        "output to produce an educational summary. This is NOT financial advice."
     )
     with st.spinner("Fetching news and generating analysis..."):
         try:
@@ -251,9 +310,10 @@ if run_rag and anthropic_api_key:
                 sim_change_pct=float(simulation.iloc[-1] / float(prices.iloc[-1]) - 1) * 100,
                 sim_high=sim_high,
                 sim_low=sim_low,
-                current_state_label=state_labels[current_state],
-                next_state_label=state_labels[model.most_likely_next_state(current_state)],
+                current_state_label=state_labels[sim_start_state],
+                next_state_label=state_labels[model.most_likely_next_state(sim_start_state)],
                 horizon=horizon,
+                articles=sentiment_data["articles"] if sentiment_data else None,
             )
             st.markdown(result["analysis"])
 
@@ -283,4 +343,4 @@ elif run_rag and not anthropic_api_key:
     st.info("Enter your Anthropic API key in the sidebar to enable AI analysis.")
     st.divider()
 
-st.caption("This tool is for educational purposes only. Not financial advice.")
+st.caption("This tool is for educational purposes only. NOT financial advice.")

@@ -3,8 +3,9 @@ rag.py — News-augmented analysis using the Claude API
 ======================================================
 
 Pipeline:
-1. fetch_news       — Pull recent news headlines + summaries via yfinance
-2. run_rag_analysis — Pass all articles + model output to Claude, return analysis + sources
+1. fetch_news          — Pull recent news headlines + summaries via yfinance
+2. get_news_sentiment  — Ask Claude to classify sentiment (-1 bearish / 0 neutral / 1 bullish)
+3. run_rag_analysis    — Pass all articles + model output to Claude, return analysis + sources
 """
 
 from __future__ import annotations
@@ -46,6 +47,84 @@ def fetch_news(ticker: str, max_articles: int = 20) -> list[dict[str, str]]:
             articles.append({"title": title, "summary": summary, "url": url, "text": text})
 
     return articles
+
+
+# ── Sentiment classification ──────────────────────────────────────────────────
+
+_SENTIMENT_TOOL = {
+    "name": "report_sentiment",
+    "description": (
+        "Report the overall market sentiment for the stock based on recent news headlines "
+        "and summaries. Use -1 for clearly bearish signals (bad earnings, downgrades, macro "
+        "headwinds, scandal), 0 for mixed or neutral news, and 1 for clearly bullish signals "
+        "(strong earnings, upgrades, major product launches, positive guidance)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "sentiment": {
+                "type": "integer",
+                "enum": [-1, 0, 1],
+                "description": "-1 = bearish, 0 = neutral, 1 = bullish",
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "One or two sentences explaining the sentiment assessment.",
+            },
+        },
+        "required": ["sentiment", "reasoning"],
+    },
+}
+
+
+def get_news_sentiment(ticker: str, api_key: str) -> dict:
+    """Fetch recent news and ask Claude to classify sentiment.
+
+    Returns
+    -------
+    dict with keys:
+        ``sentiment`` (int)  — -1 bearish, 0 neutral, 1 bullish.
+        ``reasoning`` (str)  — Claude's one-sentence explanation.
+        ``articles``  (list) — Raw articles fetched (for reuse in run_rag_analysis).
+    """
+    try:
+        import anthropic
+    except ImportError as exc:
+        raise ImportError(
+            "RAG requires the anthropic package. Install it with: pip install anthropic"
+        ) from exc
+
+    articles = fetch_news(ticker)
+    if not articles:
+        return {"sentiment": 0, "reasoning": "No recent news found.", "articles": []}
+
+    headlines = "\n".join(
+        f"- {a['title']}: {a['summary'] or a['text'][:120]}" for a in articles
+    )
+    prompt = (
+        f"Below are recent news headlines and summaries for {ticker}. "
+        f"Classify the overall market sentiment.\n\n{headlines}"
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=256,
+        tools=[_SENTIMENT_TOOL],
+        tool_choice={"type": "tool", "name": "report_sentiment"},
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "report_sentiment":
+            return {
+                "sentiment": block.input["sentiment"],
+                "reasoning": block.input["reasoning"],
+                "articles": articles,
+            }
+
+    # Fallback if tool use block is missing (shouldn't happen with tool_choice forced)
+    return {"sentiment": 0, "reasoning": "Could not determine sentiment.", "articles": articles}
 
 
 # ── Prompt construction ───────────────────────────────────────────────────────
@@ -106,8 +185,12 @@ def run_rag_analysis(
     current_state_label: str,
     next_state_label: str,
     horizon: int,
+    articles: list | None = None,
 ) -> dict:
-    """Fetch news, call Claude, return analysis text and sources.
+    """Fetch news (or reuse pre-fetched articles), call Claude, return analysis + sources.
+
+    Pass ``articles`` from a prior ``get_news_sentiment`` call to avoid a second
+    network round-trip to Yahoo Finance.
 
     Returns
     -------
@@ -123,7 +206,8 @@ def run_rag_analysis(
             "RAG requires the anthropic package. Install it with: pip install anthropic"
         ) from exc
 
-    articles = fetch_news(ticker)
+    if articles is None:
+        articles = fetch_news(ticker)
     if not articles:
         return {
             "analysis": (

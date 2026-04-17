@@ -18,7 +18,7 @@ from .states import compute_state_bins, assign_states, return_to_state, build_st
 from .transition import compute_transition_matrix, compute_state_mean_returns, compute_initial_state_counts
 from .simulation import predict_next_state, most_likely_next_state, simulate_prices
 from .summary import print_model_summary
-from .rag import fetch_news, run_rag_analysis
+from .rag import fetch_news, get_news_sentiment, run_rag_analysis
 
 __all__ = [
     "MarkovStockModel",
@@ -36,5 +36,6 @@ __all__ = [
     "simulate_prices",
     "print_model_summary",
     "fetch_news",
+    "get_news_sentiment",
     "run_rag_analysis",
 ]
