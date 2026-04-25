@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+import sys
 
 from markov import (
     MarkovStockModel,
@@ -11,11 +12,21 @@ from markov import (
     compute_transition_matrix,
     compute_state_mean_returns,
     compute_initial_state_counts,
+    run_monte_carlo,
+    train_svm,
+    predict_next_state_probs,
+    simulate_svm_prices,
     get_news_sentiment,
     run_rag_analysis,
 )
 
 st.set_page_config(page_title="Stock Predictor", layout="centered")
+
+try:
+    import sklearn  # noqa: F401
+    _sklearn_available = True
+except ImportError:
+    _sklearn_available = False
 
 st.markdown("""
     <style>
@@ -293,6 +304,175 @@ st.dataframe(pd.DataFrame(state_rows).set_index("State"), width="stretch")
 
 st.divider()
 
+# ── Monte Carlo Simulation ────────────────────────────────────────────────────
+# ── SVM RBF Prediction ────────────────────────────────────────────────────────
+st.subheader("SVM (RBF) Prediction")
+st.caption(
+    "An SVM with an RBF kernel is trained on engineered features (lagged returns, "
+    "rolling mean, volatility, momentum) to predict the next state at each step. "
+    "Its regime probability output also conditions the Monte Carlo drift below."
+)
+
+svm_clf = None
+svm_probs = None
+svm_simulation = None
+
+if not _sklearn_available:
+    py = sys.version.split()[0]
+    st.warning(
+        f"**scikit-learn is not available in the current Python environment "
+        f"(Python {py}).**\n\n"
+        "Run the app from the `llm` conda environment which has all dependencies "
+        "pre-installed:\n\n"
+        "```bash\nconda activate llm\nstreamlit run app.py\n```"
+    )
+
+with st.spinner("Training SVM model..."):
+    try:
+        svm_clf, n_train = train_svm(prices, model.state_bins, n_states)
+        svm_probs = predict_next_state_probs(svm_clf, prices)
+        svm_simulation = simulate_svm_prices(
+            svm_clf, prices, model.state_mean_returns, horizon, random_seed=int(seed)
+        )
+
+        # Price path chart
+        svm_sim_df = pd.DataFrame({
+            "Day": range(len(svm_simulation)),
+            "Price": svm_simulation.values,
+        })
+        svm_y_min = float(svm_simulation.min()) * 0.99
+        svm_y_max = float(svm_simulation.max()) * 1.01
+        svm_line = (
+            alt.Chart(svm_sim_df)
+            .mark_line(color="#ff7f0e")
+            .encode(
+                x=alt.X("Day:Q", axis=alt.Axis(tickMinStep=1)),
+                y=alt.Y("Price:Q", scale=alt.Scale(domain=[svm_y_min, svm_y_max])),
+            )
+            .properties(width="container")
+        )
+        st.altair_chart(svm_line, use_container_width=True)
+
+        # Summary metrics
+        svm_end = float(svm_simulation.iloc[-1])
+        svm_delta = svm_end - float(prices.iloc[-1])
+        svm_col1, svm_col2, svm_col3 = st.columns(3)
+        svm_col1.metric("SVM End Price", f"${svm_end:.2f}")
+        svm_col2.metric("SVM Change", f"${svm_delta:.2f}",
+                        delta=f"{svm_delta / float(prices.iloc[-1]) * 100:.1f}%")
+        svm_col3.metric("Trained on", f"{n_train} samples")
+
+        # Next-state probability bar chart
+        st.caption("Predicted probability distribution over next states:")
+        prob_df = pd.DataFrame({
+            "State": state_labels,
+            "Probability": svm_probs,
+        })
+        top_idx = int(svm_probs.argmax())
+        prob_chart = (
+            alt.Chart(prob_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("State:N", sort=None),
+                y=alt.Y("Probability:Q", scale=alt.Scale(domain=[0, 1]),
+                        axis=alt.Axis(format="%")),
+                color=alt.condition(
+                    alt.datum["State"] == state_labels[top_idx],
+                    alt.value("#ff7f0e"),
+                    alt.value("#ffbb78"),
+                ),
+                tooltip=["State:N", alt.Tooltip("Probability:Q", format=".1%")],
+            )
+            .properties(width="container")
+        )
+        st.altair_chart(prob_chart, use_container_width=True)
+        st.caption(
+            f"Most likely next state: **{state_labels[top_idx]}** "
+            f"({svm_probs[top_idx] * 100:.1f}%)"
+        )
+
+    except ImportError:
+        pass  # warning already shown above
+    except Exception as e:
+        st.error(f"SVM model failed: {e}")
+
+st.divider()
+
+# ── Monte Carlo Simulation (SVM-conditioned) ──────────────────────────────────
+st.subheader("Monte Carlo Simulation")
+if svm_probs is not None:
+    st.caption(
+        f"500 independent GBM paths over {horizon} trading days. "
+        "Drift is conditioned on the SVM's regime probabilities — "
+        "the expected return Σ P(state=i) × mean_return(i) replaces the OLS baseline. "
+        "Bands show the 10th, 25th, 50th, 75th, and 90th percentiles across all paths."
+    )
+else:
+    st.caption(
+        f"500 independent GBM paths over {horizon} trading days. "
+        "Drift estimated via OLS regression on log-prices; volatility from historical log-returns. "
+        "Bands show the 10th, 25th, 50th, 75th, and 90th percentiles across all paths."
+    )
+
+mc = run_monte_carlo(
+    prices,
+    horizon=horizon,
+    n_simulations=500,
+    random_seed=int(seed),
+    svm_probs=svm_probs,
+    state_mean_returns=model.state_mean_returns if svm_probs is not None else None,
+)
+
+days = list(range(horizon + 1))
+mc_df = pd.DataFrame({
+    "Day": days,
+    "P10": mc["bands"][10],
+    "P25": mc["bands"][25],
+    "P50": mc["bands"][50],
+    "P75": mc["bands"][75],
+    "P90": mc["bands"][90],
+})
+
+base = alt.Chart(mc_df)
+mc_y_min = float(mc["bands"][10].min()) * 0.99
+mc_y_max = float(mc["bands"][90].max()) * 1.01
+outer_band = base.mark_area(opacity=0.12, color="#1f77b4").encode(
+    x=alt.X("Day:Q", axis=alt.Axis(tickMinStep=1)),
+    y=alt.Y("P10:Q", title="Price", scale=alt.Scale(domain=[mc_y_min, mc_y_max])),
+    y2=alt.Y2("P90:Q"),
+)
+inner_band = base.mark_area(opacity=0.25, color="#1f77b4").encode(
+    x="Day:Q",
+    y="P25:Q",
+    y2=alt.Y2("P75:Q"),
+)
+median_line = base.mark_line(color="#1f77b4", strokeWidth=2).encode(
+    x="Day:Q",
+    y="P50:Q",
+)
+mc_chart = (outer_band + inner_band + median_line).properties(width="container")
+st.altair_chart(mc_chart, use_container_width=True)
+
+mc_col1, mc_col2, mc_col3 = st.columns(3)
+mc_col1.metric("Median End Price", f"${mc['median_end']:.2f}")
+mc_col2.metric("Pessimistic (P10)", f"${mc['p10_end']:.2f}")
+mc_col3.metric("Optimistic (P90)", f"${mc['p90_end']:.2f}")
+
+with st.expander("Model parameters"):
+    drift_label = mc["drift_source"]
+    param_text = (
+        f"Drift source: `{drift_label}` — `{mc['drift_daily'] * 100:+.4f}%/day`"
+    )
+    if mc["drift_source"] == "SVM-conditioned":
+        param_text += f"  ·  OLS baseline: `{mc['drift_ols'] * 100:+.4f}%/day`"
+    param_text += (
+        f"  ·  Daily volatility: `{mc['sigma_daily'] * 100:.4f}%`"
+        f"  ·  Paths: `{mc['n_simulations']}`"
+    )
+    st.caption(param_text)
+
+st.divider()
+
 # ── AI Analysis (RAG) ─────────────────────────────────────────────────────────
 if run_rag and anthropic_api_key:
     st.subheader("AI Analysis")
@@ -314,6 +494,9 @@ if run_rag and anthropic_api_key:
                 next_state_label=state_labels[model.most_likely_next_state(sim_start_state)],
                 horizon=horizon,
                 articles=sentiment_data["articles"] if sentiment_data else None,
+                monte_carlo=mc,
+                svm_probs=svm_probs,
+                state_labels=state_labels,
             )
             st.markdown(result["analysis"])
 

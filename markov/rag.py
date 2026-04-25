@@ -140,11 +140,71 @@ def _build_prompt(
     next_state_label: str,
     horizon: int,
     articles: list[dict[str, str]],
+    monte_carlo: dict | None = None,
+    svm_probs: list | None = None,
+    state_labels: list | None = None,
 ) -> str:
     news_block = "\n\n".join(
         f"[{i+1}] {a['title']}\n{a['summary'] or a['text']}"
         for i, a in enumerate(articles)
     ) or "No recent news available."
+
+    mc_block = ""
+    if monte_carlo:
+        drift_note = (
+            f"drift source: {monte_carlo.get('drift_source', 'OLS regression')} "
+            f"({monte_carlo['drift_daily'] * 100:+.4f}%/day)"
+        )
+        if monte_carlo.get("drift_source") == "SVM-conditioned":
+            drift_note += (
+                f"; OLS baseline was {monte_carlo['drift_ols'] * 100:+.4f}%/day"
+            )
+        mc_block = f"""
+## Monte Carlo Simulation Output for {ticker} ({monte_carlo['n_simulations']} paths, GBM)
+
+- {drift_note}
+- Historical daily volatility: {monte_carlo['sigma_daily'] * 100:.4f}%
+- Median end price after {horizon} days: ${monte_carlo['median_end']:.2f}
+- Mean end price: ${monte_carlo['mean_end']:.2f}
+- Pessimistic scenario (10th percentile): ${monte_carlo['p10_end']:.2f}
+- Optimistic scenario (90th percentile): ${monte_carlo['p90_end']:.2f}
+"""
+
+    svm_block = ""
+    if svm_probs is not None and state_labels is not None:
+        top_state = state_labels[int(svm_probs.argmax())]
+        top_prob = float(svm_probs.max())
+        prob_lines = "\n".join(
+            f"- {state_labels[i]}: {p * 100:.1f}%"
+            for i, p in enumerate(svm_probs)
+        )
+        svm_block = f"""
+## SVM RBF Model — Predicted Next-State Probabilities for {ticker}
+
+- Most likely next state: {top_state} ({top_prob * 100:.1f}% probability)
+{prob_lines}
+"""
+
+    has_mc = bool(monte_carlo)
+    has_svm = bool(svm_probs is not None)
+
+    if has_mc and has_svm:
+        compare_instruction = (
+            "2. Compare all three models (Markov, Monte Carlo, SVM) — "
+            "note where they agree or diverge and what that implies about confidence and uncertainty."
+        )
+    elif has_mc:
+        compare_instruction = (
+            "2. Compare the Markov chain and Monte Carlo outputs — "
+            "note where they agree or diverge and what that means for uncertainty."
+        )
+    elif has_svm:
+        compare_instruction = (
+            "2. Compare the Markov chain and SVM outputs — "
+            "note where they agree or diverge and what that implies."
+        )
+    else:
+        compare_instruction = "2. Note the key uncertainties in the model output."
 
     return f"""You are a financial analyst assistant. Your job is to combine quantitative model output with recent news to produce a balanced, educational analysis for a retail investor. Do NOT give buy/sell advice.
 
@@ -155,7 +215,7 @@ def _build_prompt(
 - Simulated range: ${sim_low:.2f} – ${sim_high:.2f}
 - Current market state: {current_state_label}
 - Most likely next state: {next_state_label}
-
+{mc_block}{svm_block}
 ## Recent News Headlines & Summaries
 
 {news_block}
@@ -163,10 +223,11 @@ def _build_prompt(
 ## Task
 
 Write a concise analysis (3–5 paragraphs) that:
-1. Summarises what the Markov model suggests about near-term price behaviour.
-2. Highlights the most relevant news themes and how they may align with or contradict the model output.
-3. Notes key risks or uncertainties the model cannot capture.
-4. Ends with a one-sentence disclaimer reminding the reader this is educational, not financial advice.
+1. Summarises what the Markov chain model suggests about near-term price behaviour.
+{compare_instruction}
+3. Highlights the most relevant news themes and how they may align with or contradict the model output.
+4. Notes key risks or uncertainties none of the models can capture.
+5. Ends with a one-sentence disclaimer reminding the reader this is educational, not financial advice.
 
 Be direct, factual, and avoid speculation beyond what the data supports."""
 
@@ -186,6 +247,9 @@ def run_rag_analysis(
     next_state_label: str,
     horizon: int,
     articles: list | None = None,
+    monte_carlo: dict | None = None,
+    svm_probs=None,
+    state_labels: list | None = None,
 ) -> dict:
     """Fetch news (or reuse pre-fetched articles), call Claude, return analysis + sources.
 
@@ -228,6 +292,9 @@ def run_rag_analysis(
         next_state_label=next_state_label,
         horizon=horizon,
         articles=articles,
+        monte_carlo=monte_carlo,
+        svm_probs=svm_probs,
+        state_labels=state_labels,
     )
 
     client = anthropic.Anthropic(api_key=api_key)
