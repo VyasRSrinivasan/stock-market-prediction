@@ -13,12 +13,19 @@ from markov import (
     compute_state_mean_returns,
     compute_initial_state_counts,
     run_monte_carlo,
-    train_svm,
-    predict_next_state_probs,
-    simulate_svm_prices,
-    get_news_sentiment,
-    run_rag_analysis,
 )
+
+try:
+    from markov import train_svm, predict_next_state_probs, simulate_svm_prices
+    _svm_importable = True
+except ImportError:
+    _svm_importable = False
+
+try:
+    from markov import get_news_sentiment, run_rag_analysis
+    _rag_importable = True
+except ImportError:
+    _rag_importable = False
 
 st.set_page_config(page_title="Stock Predictor", layout="centered")
 
@@ -317,14 +324,12 @@ svm_clf = None
 svm_probs = None
 svm_simulation = None
 
-if not _sklearn_available:
+if not _sklearn_available or not _svm_importable:
     py = sys.version.split()[0]
     st.warning(
         f"**scikit-learn is not available in the current Python environment "
         f"(Python {py}).**\n\n"
-        "Run the app from the `llm` conda environment which has all dependencies "
-        "pre-installed:\n\n"
-        "```bash\nconda activate llm\nstreamlit run app.py\n```"
+        "Install it with: `pip install scikit-learn`"
     )
 
 with st.spinner("Training SVM model..."):
