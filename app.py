@@ -162,7 +162,7 @@ def _generate_pdf(
     if sentiment_data:
         s_val = sentiment_data["sentiment"]
         s_label = {-1: "Bearish", 0: "Neutral", 1: "Bullish"}.get(s_val, "Unknown")
-        _kv("News Sentiment", f"{s_label} - {sentiment_data['reasoning'][:120]}", multicell=True)
+        _kv("News Sentiment", f"{s_label} - {sentiment_data['reasoning']}", multicell=True)
 
     pdf.ln(3)
 
