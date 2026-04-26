@@ -4,6 +4,8 @@ import numpy as np
 import altair as alt
 import sys
 import datetime
+import os
+import io
 
 from markov import (
     MarkovStockModel,
@@ -59,31 +61,70 @@ def _generate_pdf(
     except ImportError as exc:
         raise ImportError("fpdf2 is required for PDF export. Install it with: pip install fpdf2") from exc
 
-    S = _pdf_safe  # shorthand used throughout
+    S = _pdf_safe
+
+    # All widths explicit — no w=0 auto-calculations.
+    PW = 190   # A4 usable width (210 - 10 left - 10 right)
+    LW = 62    # label column for key:value rows
+    VW = PW - LW
+
+    # ── Lazy matplotlib import for chart generation ───────────────────────────
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        _charts = True
+    except ImportError:
+        _charts = False
+
+    def _embed_chart(fig):
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=130, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
+        buf.seek(0)
+        pdf.image(buf, x=pdf.l_margin, w=PW)
+        pdf.ln(3)
+
+    def _section(title):
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(PW, 8, title, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 10)
+
+    def _kv(key, val, multicell=False):
+        pdf.cell(LW, 7, S(str(key) + ":"), border=0)
+        if multicell:
+            pdf.multi_cell(VW, 7, S(str(val)), new_x="LMARGIN", new_y="NEXT")
+        else:
+            pdf.cell(VW, 7, S(str(val)), new_x="LMARGIN", new_y="NEXT")
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
     # ── Header ────────────────────────────────────────────────────────────────
+    _img = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "StockPricePredictionPDFImage.png")
+    if os.path.exists(_img):
+        _img_w = 200  # mm — compact logo at top
+        _img_x = (210 - _img_w) / 2  # centered on A4
+        pdf.image(_img, x=_img_x, w=_img_w)
+        pdf.ln(4)
+
     pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 10, S(f"Stock Prediction Report: {ticker}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(PW, 10, S(f"Stock Prediction Report: {ticker}"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 9)
     pdf.cell(
-        0, 6,
+        PW, 6,
         S(f"Generated: {datetime.date.today()}  |  Period: {period}  |  Horizon: {horizon} days  |  Seed: {seed}"),
         new_x="LMARGIN", new_y="NEXT",
     )
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 5, "Educational purposes only -- NOT financial advice.", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(PW, 5, "Educational purposes only -- NOT financial advice.", new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(0, 0, 0)
-    pdf.ln(4)
+    pdf.ln(5)
 
-    # ── Markov Chain Results ──────────────────────────────────────────────────
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 8, "Markov Chain Simulation", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 10)
+    # ── Markov Chain Simulation ───────────────────────────────────────────────
+    _section("Markov Chain Simulation")
 
     end_price = float(simulation.iloc[-1])
     delta = end_price - current_price
@@ -91,30 +132,45 @@ def _generate_pdf(
     low_pct = (sim_low / current_price - 1) * 100
     high_pct = (sim_high / current_price - 1) * 100
 
-    rows = [
-        ("Previous Close", f"${current_price:.2f}"),
-        ("Simulated End Price", f"${end_price:.2f}  ({delta_pct:+.1f}%)"),
-        ("Simulated High", f"${sim_high:.2f}  ({high_pct:+.1f}%)"),
-        ("Simulated Low", f"${sim_low:.2f}  ({low_pct:+.1f}%)"),
-        ("Current State", state_labels[current_state]),
-        ("Most Likely Next State", state_labels[model.most_likely_next_state(current_state)]),
-    ]
-    if sentiment_data:
-        s = sentiment_data["sentiment"]
-        label = {-1: "Bearish", 0: "Neutral", 1: "Bullish"}.get(s, "Unknown")
-        rows.append(("News Sentiment", f"{label} - {sentiment_data['reasoning'][:120]}"))
+    if _charts:
+        days = list(range(len(simulation)))
+        fig, ax = plt.subplots(figsize=(8, 2.8), facecolor='white')
+        ax.plot(days, simulation.values, color='#1f77b4', linewidth=1.8, zorder=3)
+        ax.axhline(sim_high, color='#2ca02c', linestyle='--', linewidth=1.2, alpha=0.9,
+                   label=f'High  ${sim_high:.2f} ({high_pct:+.1f}%)')
+        ax.axhline(sim_low, color='#d62728', linestyle='--', linewidth=1.2, alpha=0.9,
+                   label=f'Low  ${sim_low:.2f} ({low_pct:+.1f}%)')
+        y_pad = max((sim_high - sim_low) * 0.08, 0.5)
+        ax.set_ylim(sim_low - y_pad, sim_high + y_pad)
+        ax.set_xlabel('Day', fontsize=8)
+        ax.set_ylabel('Price ($)', fontsize=8)
+        ax.set_title('Simulated Price Path', fontsize=9, fontweight='bold', pad=4)
+        ax.legend(fontsize=7, framealpha=0.6, loc='upper left')
+        ax.tick_params(labelsize=7)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, alpha=0.18, linewidth=0.5)
+        plt.tight_layout(pad=0.5)
+        _embed_chart(fig)
 
-    for key, val in rows:
-        pdf.cell(65, 7, S(key + ":"), border=0)
-        pdf.multi_cell(0, 7, S(val))
+    _kv("Previous Close", f"${current_price:.2f}")
+    _kv("Simulated End Price", f"${end_price:.2f}  ({delta_pct:+.1f}%)")
+    _kv("Simulated High", f"${sim_high:.2f}  ({high_pct:+.1f}%)")
+    _kv("Simulated Low", f"${sim_low:.2f}  ({low_pct:+.1f}%)")
+    _kv("Current State", state_labels[current_state])
+    _kv("Most Likely Next State", state_labels[model.most_likely_next_state(current_state)])
+    if sentiment_data:
+        s_val = sentiment_data["sentiment"]
+        s_label = {-1: "Bearish", 0: "Neutral", 1: "Bullish"}.get(s_val, "Unknown")
+        _kv("News Sentiment", f"{s_label} - {sentiment_data['reasoning'][:120]}", multicell=True)
 
     pdf.ln(3)
 
     # Transition matrix
     pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, "Transition Matrix", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(PW, 7, "Transition Matrix", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 8)
-    col_w = max(14, int(180 / (n_states + 1)))
+    col_w = PW // (n_states + 1)
     pdf.cell(col_w, 6, "", border=1)
     for lbl in state_labels:
         pdf.cell(col_w, 6, S(lbl[:9]), border=1, align="C")
@@ -129,10 +185,10 @@ def _generate_pdf(
 
     # State definitions
     pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 7, "State Definitions", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(PW, 7, "State Definitions", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 8)
     hdr = ["State", "Return Range", "Mean Return", "Observations"]
-    col_ws = [25, 65, 35, 35]
+    col_ws = [25, 65, 50, 50]
     for h, w in zip(hdr, col_ws):
         pdf.cell(w, 6, h, border=1, align="C")
     pdf.ln()
@@ -145,35 +201,90 @@ def _generate_pdf(
 
     pdf.ln(4)
 
-    # ── SVM Section ───────────────────────────────────────────────────────────
+    # ── SVM (RBF) Prediction ──────────────────────────────────────────────────
     if svm_probs is not None and svm_simulation is not None:
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.cell(0, 8, "SVM (RBF) Prediction", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 10)
+        _section("SVM (RBF) Prediction")
 
         svm_end = float(svm_simulation.iloc[-1])
         svm_delta_pct = (svm_end - current_price) / current_price * 100
         top_idx = int(svm_probs.argmax())
 
-        pdf.cell(65, 7, "SVM End Price:", border=0)
-        pdf.cell(0, 7, f"${svm_end:.2f}  ({svm_delta_pct:+.1f}%)", new_x="LMARGIN", new_y="NEXT")
-        pdf.cell(65, 7, "Most Likely Next State:", border=0)
-        pdf.cell(0, 7, S(f"{state_labels[top_idx]} ({svm_probs[top_idx]*100:.1f}%)"), new_x="LMARGIN", new_y="NEXT")
+        if _charts:
+            svm_days = list(range(len(svm_simulation)))
+            fig, ax = plt.subplots(figsize=(8, 2.8), facecolor='white')
+            ax.plot(svm_days, svm_simulation.values, color='#ff7f0e', linewidth=1.8, zorder=3)
+            s_lo = float(svm_simulation.min())
+            s_hi = float(svm_simulation.max())
+            y_pad = max((s_hi - s_lo) * 0.08, 0.5)
+            ax.set_ylim(s_lo - y_pad, s_hi + y_pad)
+            ax.set_xlabel('Day', fontsize=8)
+            ax.set_ylabel('Price ($)', fontsize=8)
+            ax.set_title('SVM Simulated Price Path', fontsize=9, fontweight='bold', pad=4)
+            ax.tick_params(labelsize=7)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.grid(True, alpha=0.18, linewidth=0.5)
+            plt.tight_layout(pad=0.5)
+            _embed_chart(fig)
 
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 6, "Next-State Probabilities:", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 9)
-        for lbl, p in zip(state_labels, svm_probs):
-            pdf.cell(0, 5, S(f"    {lbl}: {p*100:.1f}%"), new_x="LMARGIN", new_y="NEXT")
+        _kv("SVM End Price", f"${svm_end:.2f}  ({svm_delta_pct:+.1f}%)")
+        _kv("Most Likely Next State", S(f"{state_labels[top_idx]} ({svm_probs[top_idx]*100:.1f}%)"))
+        pdf.ln(2)
+
+        if _charts:
+            colors = ['#ff7f0e' if i == top_idx else '#ffbb78' for i in range(len(state_labels))]
+            fig, ax = plt.subplots(figsize=(8, 2.6), facecolor='white')
+            ax.bar(state_labels, svm_probs * 100, color=colors, zorder=3)
+            ax.set_ylabel('Probability (%)', fontsize=8)
+            ax.set_xlabel('State', fontsize=8)
+            ax.set_title('Predicted Next-State Probabilities', fontsize=9, fontweight='bold', pad=4)
+            ax.set_ylim(0, 100)
+            ax.tick_params(labelsize=7)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.grid(True, alpha=0.18, linewidth=0.5, axis='y')
+            plt.tight_layout(pad=0.5)
+            _embed_chart(fig)
+        else:
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(PW, 6, "Next-State Probabilities:", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("Helvetica", "", 9)
+            for lbl, p in zip(state_labels, svm_probs):
+                pdf.cell(PW, 5, S(f"    {lbl}: {p*100:.1f}%"), new_x="LMARGIN", new_y="NEXT")
 
         pdf.ln(4)
 
-    # ── Monte Carlo Section ───────────────────────────────────────────────────
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 8, "Monte Carlo Simulation", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 10)
+    # ── Monte Carlo Simulation ────────────────────────────────────────────────
+    _section("Monte Carlo Simulation")
+
+    if _charts:
+        mc_days = list(range(horizon + 1))
+        fig, ax = plt.subplots(figsize=(8, 3.0), facecolor='white')
+        ax.fill_between(mc_days, mc['bands'][10], mc['bands'][90],
+                        alpha=0.13, color='#1f77b4', label='P10-P90')
+        ax.fill_between(mc_days, mc['bands'][25], mc['bands'][75],
+                        alpha=0.28, color='#1f77b4', label='P25-P75')
+        ax.plot(mc_days, mc['bands'][50], color='#1f77b4', linewidth=1.8,
+                label='Median (P50)', zorder=3)
+        y_lo = float(mc['bands'][10].min())
+        y_hi = float(mc['bands'][90].max())
+        y_pad = max((y_hi - y_lo) * 0.05, 0.5)
+        ax.set_ylim(y_lo - y_pad, y_hi + y_pad)
+        ax.set_xlabel('Day', fontsize=8)
+        ax.set_ylabel('Price ($)', fontsize=8)
+        ax.set_title(f'Monte Carlo ({mc["n_simulations"]} paths, GBM)', fontsize=9, fontweight='bold', pad=4)
+        ax.legend(fontsize=7, framealpha=0.6, loc='upper left')
+        ax.tick_params(labelsize=7)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, alpha=0.18, linewidth=0.5)
+        plt.tight_layout(pad=0.5)
+        _embed_chart(fig)
 
     mc_rows = [
+        ("Median End Price", f"${mc['median_end']:.2f}"),
+        ("Pessimistic (P10)", f"${mc['p10_end']:.2f}"),
+        ("Optimistic (P90)", f"${mc['p90_end']:.2f}"),
         ("Drift Source", S(mc["drift_source"])),
         ("Active Drift", f"{mc['drift_daily']*100:+.4f}%/day"),
     ]
@@ -182,36 +293,30 @@ def _generate_pdf(
     mc_rows += [
         ("Daily Volatility", f"{mc['sigma_daily']*100:.4f}%"),
         ("Simulations", str(mc["n_simulations"])),
-        ("Median End Price", f"${mc['median_end']:.2f}"),
-        ("Pessimistic (P10)", f"${mc['p10_end']:.2f}"),
-        ("Optimistic (P90)", f"${mc['p90_end']:.2f}"),
     ]
     for key, val in mc_rows:
-        pdf.cell(65, 7, key + ":", border=0)
-        pdf.cell(0, 7, val, new_x="LMARGIN", new_y="NEXT")
+        _kv(key, val)
 
     pdf.ln(4)
 
     # ── AI Analysis ───────────────────────────────────────────────────────────
     if rag_result:
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.cell(0, 8, "AI Analysis", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 10)
+        _section("AI Analysis")
         clean = S(rag_result["analysis"].replace("**", "").replace("*", ""))
-        pdf.multi_cell(0, 6, clean)
+        pdf.multi_cell(PW, 6, clean, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
         sources = rag_result.get("sources", [])
         if sources:
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, "Sources", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(PW, 7, "Sources", new_x="LMARGIN", new_y="NEXT")
             pdf.set_font("Helvetica", "", 9)
             for i, src in enumerate(sources, 1):
                 title = S(src["title"] or "Untitled")
-                pdf.multi_cell(0, 5, f"{i}. {title}")
+                pdf.multi_cell(PW, 5, f"{i}. {title}", new_x="LMARGIN", new_y="NEXT")
                 if src["url"]:
                     pdf.set_text_color(31, 119, 180)
-                    pdf.multi_cell(0, 5, S(src["url"]))
+                    pdf.multi_cell(PW, 5, S(src["url"]), new_x="LMARGIN", new_y="NEXT")
                     pdf.set_text_color(0, 0, 0)
                 pdf.ln(1)
 
@@ -221,9 +326,10 @@ def _generate_pdf(
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(120, 120, 120)
     pdf.multi_cell(
-        0, 5,
+        PW, 5,
         "This report is for educational purposes only and does not constitute financial advice. "
         "Past performance is not indicative of future results.",
+        new_x="LMARGIN", new_y="NEXT",
     )
 
     return bytes(pdf.output())

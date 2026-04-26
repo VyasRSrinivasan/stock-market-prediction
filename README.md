@@ -308,6 +308,29 @@ In this project:
 
 Because the model is stochastic (random), running it twice with different seed values will give different simulated paths. This reflects the genuine uncertainty in future prices.
 
+**SVM (RBF) model:**
+
+A Support Vector Machine with an RBF (radial basis function) kernel is trained on each run to predict which state the market is most likely to enter next. The features it uses are:
+- Five lagged daily log-returns (yesterday, two days ago, etc.)
+- 5-day and 10-day rolling mean log-return
+- 5-day rolling standard deviation (short-term volatility)
+- Momentum (5-day log-return minus 10-day log-return)
+
+The model outputs a full probability distribution across states, not just a single prediction. It also simulates its own price path by rolling forward one step at a time — at each step it re-computes the feature vector from the most recent (real + simulated) returns, samples a state from the predicted distribution, and compounds the price by that state's historical mean return.
+
+**Monte Carlo (GBM) simulation:**
+
+Geometric Brownian Motion models a price as a random walk where each daily step is:
+
+```
+S(t+1) = S(t) × exp((μ − 0.5σ²) + σ × Z),   Z ~ N(0, 1)
+```
+
+- **σ (volatility)** is always computed from the standard deviation of historical daily log-returns.
+- **μ (drift)** has two modes: by default it is estimated via OLS regression on log-prices (capturing the recent price trend); when the SVM has run, it is replaced by the SVM-conditioned expected return Σ P(state=i) × mean_return(i) — so a bearish SVM prediction pulls the drift down and a bullish prediction pushes it up.
+
+500 independent paths are simulated and their percentile fan bands (P10/P25/P50/P75/P90) are plotted. The expandable **Model parameters** panel shows which drift source was used, the active drift value, the OLS baseline (when SVM-conditioned), daily volatility, and path count.
+
 ---
 
 ## AI Analysis (Optional)
@@ -320,7 +343,7 @@ The **AI Analysis** feature is fully opt-in — the simulation runs as a pure Ma
 
 1. **News sentiment classification** — `rag.py` fetches recent headlines via yfinance and calls `claude-opus-4-6` using tool use to return a structured sentiment score (−1 bearish, 0 neutral, +1 bullish) and a one-sentence explanation. If bearish, the simulation starts in the lowest state; if bullish, in the highest state; if neutral, the return-based state is used unchanged. A colour-coded banner in the UI explains the adjustment.
 2. **News fetching** — The same articles retrieved for sentiment are reused (no second network call).
-3. **Prompt construction** — All articles are included in a structured prompt alongside the model's simulation results (current price, simulated end price, news-adjusted state labels, etc.).
+3. **Prompt construction** — All articles are included in a structured prompt alongside the outputs of all three models: the Markov chain simulation, the SVM's next-state probabilities, and the Monte Carlo percentile statistics. The prompt instructs Claude to compare where the models agree or diverge.
 4. **Claude API call** — The prompt is sent to `claude-opus-4-6` with adaptive thinking enabled. Claude synthesises the quantitative and qualitative signals into a 3–5 paragraph analysis.
 5. **Sources** — The articles used are surfaced in a collapsible Sources section in the UI, each with a clickable link to the original article.
 
@@ -356,11 +379,13 @@ This project is intended **for educational and research purposes ONLY**.
 
 | Package | Purpose |
 |---|---|
-| `numpy` | Numerical computations (matrix math, quantiles) |
+| `numpy` | Numerical computations (matrix math, quantiles, GBM paths) |
 | `pandas` | Data loading and manipulation |
 | `yfinance` | Downloading stock price data and news from Yahoo Finance |
 | `streamlit` | Web UI — interactive browser-based interface |
+| `scikit-learn` | SVM (RBF) classifier and `StandardScaler` pipeline |
 | `anthropic` | Claude API client — used for the optional AI Analysis feature |
+| `fpdf2` | PDF report generation — no system dependencies required |
 
 ---
 
