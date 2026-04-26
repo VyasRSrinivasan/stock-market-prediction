@@ -287,7 +287,9 @@ stock-market-prediction/
 | `simulation.py` | Steps forward day by day — randomly sampling the next state from the transition distribution and compounding the price by that state's mean return. |
 | `model.py` | `MarkovStockModel` dataclass that ties all modules together. Call `.fit()` to train, then `.simulate_prices()`, `.predict_next_state()`, or `.most_likely_next_state()` to use it. |
 | `summary.py` | Prints state bins, the full transition matrix, and per-state mean returns in a readable format. |
-| `rag.py` | Fetches recent news via yfinance, builds a prompt combining the news with Markov model output, and calls the Claude API to generate an educational analysis. |
+| `montecarlo.py` | Runs N independent GBM price paths. Drift is either estimated via OLS on log-prices or replaced by the SVM-conditioned expected return. Returns percentile fan bands (P10/25/50/75/90) and summary statistics. |
+| `svm_model.py` | Trains a `StandardScaler + SVC(kernel='rbf', probability=True)` pipeline on five lagged log-returns, rolling mean (5-day, 10-day), rolling volatility (5-day), and momentum. Exposes `predict_next_state_probs()` and `simulate_svm_prices()`. |
+| `rag.py` | Fetches recent news via yfinance, classifies sentiment using Claude tool use, builds a structured prompt that includes Markov, Monte Carlo, and SVM outputs, and calls the Claude API to generate an educational analysis. |
 
 ---
 
