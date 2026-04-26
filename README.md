@@ -2,14 +2,17 @@
 
 ## What This Project Does
 
-This project uses a **Markov chain** model to simulate how a stock's price might move in the future, based on its past daily returns. It also includes an optional **AI Analysis** feature that fetches recent news about the ticker and uses Claude (Anthropic's AI) to produce an educational summary alongside the simulation. It is a learning tool — not financial advice.
+This project uses a **Markov chain** model to simulate how a stock's price might move in the future, based on its past daily returns. On top of that it layers two additional quantitative models — an **SVM (RBF) classifier** and a **Monte Carlo (GBM) simulator** — whose outputs are chained together so each model enriches the next. An optional **AI Analysis** feature fetches recent news and uses Claude to produce an educational summary that covers all three models. It is a learning tool — not financial advice.
 
 Here is the basic idea:
 1. It downloads historical stock closing prices from Yahoo Finance.
 2. It groups each day's return into a "state" (e.g. big drop, small drop, flat, small gain, big gain).
 3. It counts how often the market moves from one state to another — this becomes the **transition matrix**.
 4. It uses that matrix to randomly simulate probable future price paths.
-5. Optionally, it retrieves recent news headlines and passes them to Claude to generate a contextual analysis.
+5. An **SVM with an RBF kernel** is trained on engineered features (lagged returns, rolling statistics, momentum) to predict the probability distribution over the next state.
+6. A **Monte Carlo (GBM) simulation** runs 500 independent price paths. When the SVM is available, its regime probabilities replace the OLS drift estimate, making the simulation regime-aware.
+7. Optionally, it retrieves recent news headlines and passes all three models' outputs to Claude to generate a contextual analysis.
+8. All results can be **downloaded as a PDF report** with a single click.
 
 ---
 
@@ -30,8 +33,11 @@ Rather than trying to predict exact future prices (which is not reliably possibl
 - Represent daily stock returns as a sequence of discrete states (e.g. large loss, small loss, flat, small gain, large gain).
 - Learn a **transition matrix** from historical data that captures how likely the market is to move from one state to another.
 - Use the fitted model to **simulate future price paths** by randomly sampling state transitions.
-- Optionally layer in **AI-powered news analysis** using the Claude API and recent headlines.
-- Provide a clean, beginner-friendly example of applying Markov chains to financial time series data.
+- Train an **SVM (RBF) classifier** on engineered features to predict the next-state probability distribution and simulate an alternative price path.
+- Run a **Monte Carlo (GBM) simulation** whose drift is conditioned on the SVM's regime probabilities when available, otherwise falling back to an OLS trend estimate.
+- Optionally layer in **AI-powered news analysis** using the Claude API — Claude is given all three models' outputs and synthesises them with recent headlines.
+- Allow users to **download a PDF report** of every result with a single button click.
+- Provide a clean, beginner-friendly example of applying Markov chains and ML to financial time series data.
 
 ---
 
@@ -146,6 +152,9 @@ A browser tab will open automatically at `http://localhost:8501`.
   - Current and most likely next market state
   - Transition matrix
   - State definitions table (return range, mean return, observation count)
+  - **SVM (RBF) Prediction** — a separate price path simulated by the SVM model, end-price metrics, and a bar chart of the predicted next-state probability distribution
+  - **Monte Carlo Simulation** — a fan chart of 500 GBM paths showing the P10/P25/P50/P75/P90 percentile bands, with median, pessimistic (P10), and optimistic (P90) end prices. The drift is automatically conditioned on SVM regime probabilities when available; an expandable parameters panel shows which drift source was used.
+  - **Download Report** — a button at the bottom that exports all results as a PDF
 
 **Optional — AI Analysis (requires Anthropic API key):**
 
@@ -235,7 +244,13 @@ Row 0, column 4 = 0.300 means: after a very bad day, there is a 30% chance the n
 
 **Simulated high / low** — The maximum and minimum prices reached during the simulated path, shown as dashed green/red reference lines on the chart. The metric cards display the high value and percentage in green and the low value and percentage in red (with a highlighted badge) for quick visual scanning.
 
-**AI Analysis** *(optional, requires API key + checkbox)* — A 3–5 paragraph summary written by Claude that interprets the model output in light of recent news. Includes a sentiment banner explaining any starting-state adjustment and a Sources section with links to every article used. The pure Markov simulation is unaffected when this feature is disabled.
+**SVM (RBF) Prediction** — An SVM classifier trained on five lagged log-returns, rolling mean (5-day and 10-day), rolling volatility (5-day), and momentum predicts the probability of each state occurring next. The most likely state and its probability are shown above a bar chart of the full distribution. The SVM also simulates its own price path by rolling forward, re-computing features from each newly simulated return.
+
+**Monte Carlo Simulation** — 500 independent Geometric Brownian Motion paths are simulated over the chosen horizon. Percentile fan bands (P10/P25/P50/P75/P90) are shown on the chart. When the SVM has run successfully, the GBM drift is replaced by the SVM-conditioned expected return Σ P(state=i) × mean_return(i) — making the simulation regime-aware. If the SVM is unavailable, drift falls back to an OLS trend estimate on log-prices. An expandable **Model parameters** panel shows the drift source, active drift value, OLS baseline (when SVM is used), daily volatility, and number of paths.
+
+**AI Analysis** *(optional, requires API key + checkbox)* — A 3–5 paragraph summary written by Claude that interprets all three models' output in light of recent news. The prompt includes Markov, Monte Carlo, and SVM outputs so Claude can compare where they agree or diverge. Includes a sentiment banner explaining any starting-state adjustment and a Sources section with links to every article used. The pure Markov simulation is unaffected when this feature is disabled.
+
+**Download Report** — A **Download PDF Report** button appears at the bottom of the results page. Clicking it generates and downloads a PDF containing every section: Markov metrics, transition matrix, state definitions, SVM probabilities, Monte Carlo parameters, AI analysis text, and news sources.
 
 ---
 
@@ -253,6 +268,8 @@ stock-market-prediction/
 │   ├── simulation.py        # Simulate future price paths via state transitions
 │   ├── model.py             # MarkovStockModel — high-level fit/predict/simulate API
 │   ├── summary.py           # Print a human-readable model summary
+│   ├── montecarlo.py        # Monte Carlo (GBM) simulation with OLS / SVM-conditioned drift
+│   ├── svm_model.py         # SVM (RBF) next-state classifier and price simulator
 │   └── rag.py               # AI Analysis — news fetching and Claude API integration
 ├── markov_stock_prediction.py   # CLI entry point — thin wrapper around the package
 ├── app.py                       # Streamlit web UI

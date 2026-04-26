@@ -4,3 +4,4 @@ yfinance
 streamlit
 anthropic
 scikit-learn
+fpdf2

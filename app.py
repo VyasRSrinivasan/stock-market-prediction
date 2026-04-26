@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import altair as alt
 import sys
+import datetime
 
 from markov import (
     MarkovStockModel,
@@ -26,6 +27,207 @@ try:
     _rag_importable = True
 except ImportError:
     _rag_importable = False
+
+def _pdf_safe(text: str) -> str:
+    """Replace Unicode characters outside Latin-1 with ASCII equivalents."""
+    return (
+        str(text)
+        .replace("\u2014", "--")   # em dash
+        .replace("\u2013", "-")    # en dash
+        .replace("\u2018", "'")    # left single quote
+        .replace("\u2019", "'")    # right single quote
+        .replace("\u201c", '"')    # left double quote
+        .replace("\u201d", '"')    # right double quote
+        .replace("\u2026", "...")  # ellipsis
+        .replace("\u2022", "-")    # bullet
+        .replace("\u00b7", ".")    # middle dot
+        .encode("latin-1", errors="replace").decode("latin-1")
+    )
+
+
+def _generate_pdf(
+    ticker, period, horizon, seed, n_states,
+    current_price, simulation, sim_high, sim_low,
+    current_state, state_labels, model,
+    svm_probs, svm_simulation,
+    mc,
+    sentiment_data,
+    rag_result,
+):
+    try:
+        from fpdf import FPDF
+    except ImportError as exc:
+        raise ImportError("fpdf2 is required for PDF export. Install it with: pip install fpdf2") from exc
+
+    S = _pdf_safe  # shorthand used throughout
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 10, S(f"Stock Prediction Report: {ticker}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(
+        0, 6,
+        S(f"Generated: {datetime.date.today()}  |  Period: {period}  |  Horizon: {horizon} days  |  Seed: {seed}"),
+        new_x="LMARGIN", new_y="NEXT",
+    )
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(120, 120, 120)
+    pdf.cell(0, 5, "Educational purposes only -- NOT financial advice.", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+    # ── Markov Chain Results ──────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "Markov Chain Simulation", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+
+    end_price = float(simulation.iloc[-1])
+    delta = end_price - current_price
+    delta_pct = delta / current_price * 100
+    low_pct = (sim_low / current_price - 1) * 100
+    high_pct = (sim_high / current_price - 1) * 100
+
+    rows = [
+        ("Previous Close", f"${current_price:.2f}"),
+        ("Simulated End Price", f"${end_price:.2f}  ({delta_pct:+.1f}%)"),
+        ("Simulated High", f"${sim_high:.2f}  ({high_pct:+.1f}%)"),
+        ("Simulated Low", f"${sim_low:.2f}  ({low_pct:+.1f}%)"),
+        ("Current State", state_labels[current_state]),
+        ("Most Likely Next State", state_labels[model.most_likely_next_state(current_state)]),
+    ]
+    if sentiment_data:
+        s = sentiment_data["sentiment"]
+        label = {-1: "Bearish", 0: "Neutral", 1: "Bullish"}.get(s, "Unknown")
+        rows.append(("News Sentiment", f"{label} - {sentiment_data['reasoning'][:120]}"))
+
+    for key, val in rows:
+        pdf.cell(65, 7, S(key + ":"), border=0)
+        pdf.multi_cell(0, 7, S(val))
+
+    pdf.ln(3)
+
+    # Transition matrix
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, "Transition Matrix", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 8)
+    col_w = max(14, int(180 / (n_states + 1)))
+    pdf.cell(col_w, 6, "", border=1)
+    for lbl in state_labels:
+        pdf.cell(col_w, 6, S(lbl[:9]), border=1, align="C")
+    pdf.ln()
+    for i, row_lbl in enumerate(state_labels):
+        pdf.cell(col_w, 6, S(row_lbl[:9]), border=1)
+        for j in range(n_states):
+            pdf.cell(col_w, 6, f"{model.transition_matrix[i, j]:.3f}", border=1, align="C")
+        pdf.ln()
+
+    pdf.ln(3)
+
+    # State definitions
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, "State Definitions", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 8)
+    hdr = ["State", "Return Range", "Mean Return", "Observations"]
+    col_ws = [25, 65, 35, 35]
+    for h, w in zip(hdr, col_ws):
+        pdf.cell(w, 6, h, border=1, align="C")
+    pdf.ln()
+    for i in range(n_states):
+        pdf.cell(col_ws[0], 6, S(state_labels[i]), border=1)
+        pdf.cell(col_ws[1], 6, f"{model.state_bins[i]:.4f}  ->  {model.state_bins[i+1]:.4f}", border=1, align="C")
+        pdf.cell(col_ws[2], 6, f"{model.state_mean_returns[i]:.5f}", border=1, align="C")
+        pdf.cell(col_ws[3], 6, str(int(model.initial_state_counts[i])), border=1, align="C")
+        pdf.ln()
+
+    pdf.ln(4)
+
+    # ── SVM Section ───────────────────────────────────────────────────────────
+    if svm_probs is not None and svm_simulation is not None:
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(0, 8, "SVM (RBF) Prediction", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 10)
+
+        svm_end = float(svm_simulation.iloc[-1])
+        svm_delta_pct = (svm_end - current_price) / current_price * 100
+        top_idx = int(svm_probs.argmax())
+
+        pdf.cell(65, 7, "SVM End Price:", border=0)
+        pdf.cell(0, 7, f"${svm_end:.2f}  ({svm_delta_pct:+.1f}%)", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(65, 7, "Most Likely Next State:", border=0)
+        pdf.cell(0, 7, S(f"{state_labels[top_idx]} ({svm_probs[top_idx]*100:.1f}%)"), new_x="LMARGIN", new_y="NEXT")
+
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 6, "Next-State Probabilities:", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        for lbl, p in zip(state_labels, svm_probs):
+            pdf.cell(0, 5, S(f"    {lbl}: {p*100:.1f}%"), new_x="LMARGIN", new_y="NEXT")
+
+        pdf.ln(4)
+
+    # ── Monte Carlo Section ───────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "Monte Carlo Simulation", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+
+    mc_rows = [
+        ("Drift Source", S(mc["drift_source"])),
+        ("Active Drift", f"{mc['drift_daily']*100:+.4f}%/day"),
+    ]
+    if mc["drift_source"] == "SVM-conditioned":
+        mc_rows.append(("OLS Baseline Drift", f"{mc['drift_ols']*100:+.4f}%/day"))
+    mc_rows += [
+        ("Daily Volatility", f"{mc['sigma_daily']*100:.4f}%"),
+        ("Simulations", str(mc["n_simulations"])),
+        ("Median End Price", f"${mc['median_end']:.2f}"),
+        ("Pessimistic (P10)", f"${mc['p10_end']:.2f}"),
+        ("Optimistic (P90)", f"${mc['p90_end']:.2f}"),
+    ]
+    for key, val in mc_rows:
+        pdf.cell(65, 7, key + ":", border=0)
+        pdf.cell(0, 7, val, new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(4)
+
+    # ── AI Analysis ───────────────────────────────────────────────────────────
+    if rag_result:
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(0, 8, "AI Analysis", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 10)
+        clean = S(rag_result["analysis"].replace("**", "").replace("*", ""))
+        pdf.multi_cell(0, 6, clean)
+        pdf.ln(3)
+
+        sources = rag_result.get("sources", [])
+        if sources:
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 7, "Sources", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("Helvetica", "", 9)
+            for i, src in enumerate(sources, 1):
+                title = S(src["title"] or "Untitled")
+                pdf.multi_cell(0, 5, f"{i}. {title}")
+                if src["url"]:
+                    pdf.set_text_color(31, 119, 180)
+                    pdf.multi_cell(0, 5, S(src["url"]))
+                    pdf.set_text_color(0, 0, 0)
+                pdf.ln(1)
+
+        pdf.ln(3)
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(120, 120, 120)
+    pdf.multi_cell(
+        0, 5,
+        "This report is for educational purposes only and does not constitute financial advice. "
+        "Past performance is not indicative of future results.",
+    )
+
+    return bytes(pdf.output())
+
 
 st.set_page_config(page_title="Stock Predictor", layout="centered")
 
@@ -479,6 +681,7 @@ with st.expander("Model parameters"):
 st.divider()
 
 # ── AI Analysis (RAG) ─────────────────────────────────────────────────────────
+rag_result = None
 if run_rag and anthropic_api_key:
     st.subheader("AI Analysis")
     st.caption(
@@ -503,6 +706,7 @@ if run_rag and anthropic_api_key:
                 svm_probs=svm_probs,
                 state_labels=state_labels,
             )
+            rag_result = result
             st.markdown(result["analysis"])
 
             sources = result["sources"]
@@ -530,5 +734,38 @@ if run_rag and anthropic_api_key:
 elif run_rag and not anthropic_api_key:
     st.info("Enter your Anthropic API key in the sidebar to enable AI analysis.")
     st.divider()
+
+# ── PDF Download ──────────────────────────────────────────────────────────────
+st.subheader("Download Report")
+try:
+    pdf_bytes = _generate_pdf(
+        ticker=ticker,
+        period=period,
+        horizon=horizon,
+        seed=seed,
+        n_states=n_states,
+        current_price=float(prices.iloc[-1]),
+        simulation=simulation,
+        sim_high=sim_high,
+        sim_low=sim_low,
+        current_state=current_state,
+        state_labels=state_labels,
+        model=model,
+        svm_probs=svm_probs,
+        svm_simulation=svm_simulation,
+        mc=mc,
+        sentiment_data=sentiment_data,
+        rag_result=rag_result,
+    )
+    st.download_button(
+        label="Download PDF Report",
+        data=pdf_bytes,
+        file_name=f"{ticker}_prediction_{datetime.date.today()}.pdf",
+        mime="application/pdf",
+    )
+except ImportError as _pdf_err:
+    st.info(f"{_pdf_err}")
+except Exception as _pdf_err:
+    st.error(f"PDF generation failed: {_pdf_err}")
 
 st.caption("This tool is for educational purposes only. NOT financial advice.")
