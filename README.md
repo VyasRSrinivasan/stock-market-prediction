@@ -221,24 +221,25 @@ python3 markov_stock_prediction.py --csv data/prices.csv --date-column date --pr
 
 ## Understanding the Output
 
-**State bins** — The return thresholds that define each state. For example:
+**State bins** — The return thresholds that define each regime. For example:
 ```
-bin 0: -0.04998   ← very negative returns land in state 0
-bin 1: -0.00833
-...
-bin 5:  0.06315   ← very positive returns land in state 4
+bin 0: -0.04998   ← Capitulation / severe drawdown (bottom quintile)
+bin 1: -0.00833   ← Mild distribution / corrective pressure
+bin 2:  0.00000   ← Consolidation / range-bound session (median)
+bin 3:  0.00833   ← Accumulation / moderate upside
+bin 5:  0.06315   ← Strong momentum / breakout session (top quintile)
 ```
 
-**Transition matrix** — The probability of moving from one state (row) to another (column) on the next day. Each row sums to 1.0.
+**Transition matrix** — The empirical regime-transition probability matrix. Each cell T[i][j] is the historical frequency of moving from regime i (row) to regime j (column) on the next trading day. Each row sums to 1.0.
 ```
        0      1      2      3      4
 0  0.240  0.140  0.160  0.160  0.300
 1  0.220  0.280  0.200  0.140  0.160
 ...
 ```
-Row 0, column 4 = 0.300 means: after a very bad day, there is a 30% chance the next day is a very good day.
+Row 0, column 4 = 0.300: following a capitulation session, there is a 30% probability of a momentum/breakout day — consistent with a sharp mean-reversion dynamic (e.g. oversold bounce). The high T[0][0] = 0.240 simultaneously indicates that drawdown sessions also show meaningful persistence (consecutive down days are nearly as likely as an immediate bounce).
 
-**Mean return per state** — The average daily return observed in each state historically.
+**Mean return per state** — The average realised daily log-return within each regime, estimated from the full historical sample. This is the return the simulation compounds when the model occupies that state.
 
 **Simulated price path** — A sequence of prices starting from today's closing price, projected forward day by day using random state transitions.
 
@@ -298,19 +299,66 @@ stock-market-prediction/
 A **Markov chain** is a simple mathematical model where the next state depends only on the current state — not on anything that happened before. Think of it like a weather forecast that only looks at today's weather to guess tomorrow's.
 
 In this project:
-- Each "state" represents how well the stock did on a given day (e.g. state 0 = bad day, state 4 = great day).
-- The **transition matrix** is learned from historical data and captures patterns like "after a great day, what usually happens next?"
-- During simulation, the model randomly picks the next state according to those learned probabilities, then computes the next price from the state's average return.
+- Each "state" represents a distinct **return regime** observed in the security's daily price history — ranging from severe drawdown at one end to strong momentum at the other.
+- The **transition matrix** is estimated from historical data and encodes the empirical regime-transition probabilities: given that the market is in a particular regime today, how likely is each regime tomorrow?
+- During simulation, the model samples the next regime according to those learned probabilities, then compounds the price by the mean return historically observed in that regime.
 
 **State bucketing modes:**
-- **Quantile** — divides all historical returns into N equal-sized groups by percentile. More states give a finer picture of the return distribution.
-- **Volume (Low / Average / High)** — uses 3 fixed buckets relative to the historical mean return. Returns more than half a standard deviation below the mean are *Low*, within half a standard deviation are *Average*, and above are *High*.
+- **Quantile** — partitions all historical daily log-returns into N equal-frequency bins. Each bin captures an identically-sized slice of the return distribution, so all states are equally represented in the training data. More states reveal finer granularity in the return distribution at the cost of sparser transition observations per cell.
+- **Volume (Low / Average / High)** — assigns each day to one of three regime buckets relative to the security's historical mean daily return (μ) and standard deviation (σ): returns below μ − 0.5σ map to *Low*, returns within ±0.5σ of μ map to *Average*, and returns above μ + 0.5σ map to *High*. This schema is parameter-free and directly interpretable in terms of realized volatility bands.
 
-Because the model is stochastic (random), running it twice with different seed values will give different simulated paths. This reflects the genuine uncertainty in future prices.
+Because the model is stochastic, running it twice with different seed values produces different simulated paths. This reflects the genuine dispersion of outcomes implied by the historical regime-transition structure.
+
+---
+
+## Market States — Financial Interpretation
+
+Each state in the Markov chain corresponds to a **daily return regime** calibrated from historical price data. Below is the financial analyst interpretation for each bucketing schema.
+
+### Quantile States (3–10 states)
+
+With the default 5-state quantile schema, states map to the following market conditions:
+
+| State | Percentile Band | Financial Interpretation |
+|---|---|---|
+| **State 0** | Bottom quintile (≤ P20) | **Capitulation / Severe Drawdown** — returns in the lowest 20th percentile, characteristic of panic selling, risk-off cascade events, gap-downs on adverse macro data or earnings shocks, or forced liquidation. Sustained occupancy in this state implies elevated drawdown velocity and deteriorating price momentum. |
+| **State 1** | P20–P40 | **Mild Distribution / Corrective Pressure** — below-median returns reflecting moderate selling pressure, consistent with profit-taking, sector rotation out of the name, or softening buying conviction. Often precedes either a recovery to consolidation or a further deterioration into State 0. |
+| **State 2** | P40–P60 (median) | **Consolidation / Range-Bound Session** — returns near the median, representing equilibrium between supply and demand. Price action is choppy or sideways, consistent with low-conviction tape. Frequently precedes a volatility-expansion event in either direction. |
+| **State 3** | P60–P80 | **Accumulation / Moderate Upside** — above-median returns, consistent with constructive price action, institutional accumulation, positive earnings revisions, or improving risk sentiment and breadth. |
+| **State 4** | Top quintile (≥ P80) | **Strong Momentum / Breakout Session** — returns in the top 20th percentile, characteristic of bullish momentum, gap-ups on catalysts (earnings beat, analyst upgrade, positive macro surprise), or breakout from a prior consolidation range. Sustained occupancy signals strong positive price momentum but may also indicate near-term overbought conditions. |
+
+With more granular state counts (e.g. 10 states), each bin spans a narrower decile of the return distribution, allowing the model to distinguish finer gradations such as moderate versus severe drawdown, or mild accumulation versus a full breakout session.
+
+### Volume States (Low / Average / High)
+
+The three-state volume schema maps directly to classic technical regime labels:
+
+| State | Threshold | Financial Interpretation |
+|---|---|---|
+| **Low** | Return < μ − 0.5σ | **Bearish Regime** — the day's return falls meaningfully below the security's historical average, consistent with a risk-off environment, distribution phase, downtrend continuation, or short-side pressure. Elevated autocorrelation within this state (high Low→Low transition probability) signals persistent bearish momentum rather than a transient dip. |
+| **Average** | μ − 0.5σ ≤ Return ≤ μ + 0.5σ | **Neutral / Indecisive Regime** — the day's return is within one-half standard deviation of the historical mean, reflecting balanced order flow, range-bound tape, or a digestion phase following a directional move. The Average state acts as a transitional regime; the transition probabilities out of it indicate whether the security tends to revert to trend or break out. |
+| **High** | Return > μ + 0.5σ | **Bullish Regime** — the day's return materially exceeds the historical average, consistent with an accumulation phase, trend-continuation session, breakout from prior resistance, or positive catalyst event. High autocorrelation within this state signals persistent positive momentum and a favourable near-term technical backdrop. |
+
+### Reading the Transition Matrix as a Practitioner
+
+The transition matrix is the core quantitative output of the Markov model. Each cell T[i][j] gives the **empirical probability of transitioning from regime i to regime j on the next trading day**, estimated from the full historical sample.
+
+Key patterns to look for:
+
+- **High diagonal values (T[i][i] > 0.5)** — strong **regime persistence**. Bearish regimes that tend to stay bearish (high T[0][0]) suggest downside momentum; bullish regimes that remain bullish (high T[N-1][N-1]) suggest positive momentum continuation.
+- **High off-diagonal T[0][N-1] or T[N-1][0]** — elevated **mean-reversion probability**. A high probability of jumping from the lowest state directly to the highest (or vice versa) is characteristic of high-volatility, whipsaw-prone securities.
+- **Flat rows (all values ≈ 1/N)** — **regime-agnostic transitions**, meaning the next day's return is essentially independent of today's. This implies the Markov assumption adds little predictive value for this security over the chosen period.
+- **Skewed rows toward higher states** — regardless of the current regime, the security tends to drift upward, indicating a secular bullish bias in the historical sample. The reverse skew signals a bearish secular trend.
+
+### Current State and Most Likely Next State
+
+The **Current State** shown in the UI reflects the regime into which the most recent trading day's return falls, given the model's calibrated bin edges. This is the starting point for all forward simulations.
+
+The **Most Likely Next State** is the column j in the current state's transition row T[current_state][j] with the highest probability. It is the single-step modal forecast under the Markov model — not a certainty, but the historically most probable next regime. When the AI Analysis feature is enabled, Claude's news-sentiment signal may override the starting state: a **bearish** sentiment score anchors the simulation in the lowest regime (State 0 / Low), and a **bullish** score anchors it in the highest regime, reflecting the qualitative macro or company-specific context that pure return history cannot capture.
 
 **SVM (RBF) model:**
 
-A Support Vector Machine with an RBF (radial basis function) kernel is trained on each run to predict which state the market is most likely to enter next. The features it uses are:
+A Support Vector Machine with an RBF (Radial Basis Function) kernel is trained on each run to predict which state the market is most likely to enter next. The features it uses are:
 - Five lagged daily log-returns (yesterday, two days ago, etc.)
 - 5-day and 10-day rolling mean log-return
 - 5-day rolling standard deviation (short-term volatility)
