@@ -2,7 +2,7 @@
 
 ## What This Project Does
 
-This project uses a **Markov chain** model to simulate how a stock's price might move in the future, based on its past daily returns. On top of that it layers two additional quantitative models — an **SVM (RBF) classifier** and a **Monte Carlo (GBM) simulator** — whose outputs are chained together so each model enriches the next. An optional **AI Analysis** feature fetches recent news and uses Claude to produce an educational summary that covers all three models. It is a learning tool — not financial advice.
+This project uses a **Markov chain** model to simulate how a stock's price might move in the future, based on its past daily returns. On top of that it layers two additional quantitative models — an **SVM (RBF) classifier** and a **Monte Carlo (GBM) simulator** — whose outputs are chained together so each model enriches the next. An optional **AI Analysis** feature fetches recent news and uses your choice of AI provider to produce an educational summary that covers all three models. It is a learning tool — not financial advice.
 
 Here is the basic idea:
 1. It downloads historical stock closing prices from Yahoo Finance.
@@ -11,7 +11,7 @@ Here is the basic idea:
 4. It uses that matrix to randomly simulate probable future price paths.
 5. An **SVM with an RBF kernel** is trained on engineered features (lagged returns, rolling statistics, momentum) to predict the probability distribution over the next state.
 6. A **Monte Carlo (GBM) simulation** runs 500 independent price paths. When the SVM is available, its regime probabilities replace the OLS drift estimate, making the simulation regime-aware.
-7. Optionally, it retrieves recent news headlines and passes all three models' outputs to Claude to generate a contextual analysis.
+7. Optionally, it retrieves recent news headlines and passes all three models' outputs to your chosen AI provider (Anthropic Claude, OpenAI, Google Gemini, or DeepSeek) to generate a contextual analysis, with optional per-article relevance summaries.
 8. All results can be **downloaded as a PDF report** with a single click.
 
 ---
@@ -35,8 +35,8 @@ Rather than trying to predict exact future prices (which is not reliably possibl
 - Use the fitted model to **simulate future price paths** by randomly sampling state transitions.
 - Train an **SVM (RBF) classifier** on engineered features to predict the next-state probability distribution and simulate an alternative price path.
 - Run a **Monte Carlo (GBM) simulation** whose drift is conditioned on the SVM's regime probabilities when available, otherwise falling back to an OLS trend estimate.
-- Optionally layer in **AI-powered news analysis** using the Claude API — Claude is given all three models' outputs and synthesises them with recent headlines.
-- Allow users to **download a PDF report** of every result with a single button click.
+- Optionally layer in **AI-powered news analysis** using a choice of provider (Anthropic Claude, OpenAI, Google Gemini, or DeepSeek) — the model is given all three quantitative outputs and synthesises them with recent headlines. Optionally generate an AI relevance summary for each source article.
+- Allow users to **download a PDF report** of every result with a single button click, including charts, AI analysis, provider attribution, and per-article relevance summaries.
 - Provide a clean, beginner-friendly example of applying Markov chains and ML to financial time series data.
 
 ---
@@ -59,31 +59,28 @@ pip --version
 
 ---
 
-## Obtaining an Anthropic API Key
+## Obtaining an API Key
 
 An API key is only needed for the optional **AI Analysis** feature. The Markov chain simulation works without one.
 
-**1. Create a free Anthropic account**
+The app supports four providers. Use whichever you already have access to — all four work identically once a key is entered.
 
-Go to [console.anthropic.com](https://console.anthropic.com/) and sign up with your email address.
+| Provider | Where to get a key |
+|---|---|
+| **Anthropic (Claude)** | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
+| **OpenAI** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **Google Gemini** | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
+| **DeepSeek** | [platform.deepseek.com/api-keys](https://platform.deepseek.com/api-keys) |
 
-**2. Navigate to API Keys**
+**How to add your key to the app:**
 
-After logging in, click your account name in the top-right corner and select **API Keys**, or go directly to [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
+1. In the sidebar under **AI Analysis (optional)**, select your provider from the **Provider** dropdown.
+2. Paste your API key into the field that appears (labelled with your chosen provider's name). It is masked as a password and is never stored beyond your browser session.
+3. Tick **Generate AI Analysis** and click **Run Simulation**.
 
-**3. Create a new key**
+The AI Analysis makes two API calls per run — one for sentiment classification and one for the full analysis — so costs are minimal regardless of provider.
 
-Click **Create Key**, give it a name (e.g. `stock-predictor`), and click **Create Key** again. Copy the key immediately — it is only shown once.
-
-**4. Add credits (if needed)**
-
-New accounts include a small free credit. For ongoing use, add a payment method under **Billing** at [console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing). The AI Analysis feature makes two lightweight API calls per simulation run (one for sentiment, one for the full analysis), so costs are minimal.
-
-**5. Paste the key into the app**
-
-In the sidebar under **AI Analysis (optional)**, paste your key into the **Anthropic API Key** field. It is masked as a password and is never stored beyond your browser session.
-
-> **Security note:** Never commit your API key to version control. If you want to set it as an environment variable instead, you can read it in `rag.py` via `os.environ.get("ANTHROPIC_API_KEY")` and skip the sidebar input.
+> **Security note:** Never commit your API key to version control. You can also supply it via an environment variable (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) and read it in `rag.py` via `os.environ.get(...)` to skip the sidebar input.
 
 ---
 
@@ -153,22 +150,26 @@ A browser tab will open automatically at `http://localhost:8501`.
   - Transition matrix
   - State definitions table (return range, mean return, observation count)
   - **SVM (RBF) Prediction** — a separate price path simulated by the SVM model, end-price metrics, and a bar chart of the predicted next-state probability distribution
-  - **Monte Carlo Simulation** — a fan chart of 500 GBM paths showing the P10/P25/P50/P75/P90 percentile bands, with median, pessimistic (P10), and optimistic (P90) end prices. The drift is automatically conditioned on SVM regime probabilities when available; an expandable parameters panel shows which drift source was used.
-  - **Download Report** — a button at the bottom that exports all results as a PDF
+  - **Monte Carlo Simulation** — a fan chart of 500 GBM paths showing the P10/P25/P50/P75/P90 percentile bands, with median, pessimistic (P10), and optimistic (P90) end prices. The drift is automatically conditioned on SVM regime probabilities when available; a compact **Model parameters** panel shows drift source, active drift, OLS baseline, daily volatility, and path count.
+  - **Download Report** — a button at the bottom that exports all results as a PDF including all charts
 
-**Optional — AI Analysis (requires Anthropic API key):**
+**UI styling:** the app uses a financial analyst typographic system — Playfair Display (headings), IBM Plex Sans (body), and IBM Plex Mono (metric values and tables) — with a navy and gold color scheme (`#00296b` / `#fdc500`) applied to headings, metric cards, buttons, and accents. The sidebar has a mint green background (`#c2f2e2`) with a gold right border.
+
+**Optional — AI Analysis:**
 
 The AI Analysis feature is entirely opt-in and does not affect the simulation unless explicitly enabled:
 
-1. Paste your [Anthropic API key](https://console.anthropic.com/) into the sidebar under **AI Analysis (optional)**.
-2. Tick **Generate AI Analysis**.
-3. Click **Run Simulation**.
+1. Select a provider from the **Provider** dropdown (Anthropic, OpenAI, Google Gemini, or DeepSeek). A colour-coded logo badge for the selected provider is shown above the dropdown.
+2. Paste your API key for that provider into the field below.
+3. Tick **Generate AI Analysis**.
+4. Optionally tick **AI-summarize each source article** to generate a one-sentence relevance note for each news article (uses one additional API call).
+5. Click **Run Simulation**.
 
 When enabled, two things happen before results are shown:
-- **News sentiment classification** — Claude reads the latest headlines for the ticker and classifies sentiment as bearish (−1), neutral (0), or bullish (+1). A banner explains whether and how the simulation's starting state was adjusted based on this signal.
-- **Full AI analysis** — Claude combines the Markov model output with the news to produce a 3–5 paragraph educational summary. A collapsible **Sources** section lists every article used, with clickable links.
+- **News sentiment classification** — the selected model reads the latest headlines for the ticker and classifies sentiment as bearish (−1), neutral (0), or bullish (+1). A banner explains whether and how the simulation's starting state was adjusted based on this signal.
+- **Full AI analysis** — the model combines the Markov, SVM, and Monte Carlo outputs with recent news to produce a 3–5 paragraph educational summary. A collapsible **Sources** section lists every article used, with clickable links. If source summarization is enabled, each article also shows an AI-generated sentence explaining its relevance to the simulation result.
 
-If no API key is entered or the checkbox is left unticked, the simulation runs as a pure Markov chain with no external data or Claude calls.
+If no API key is entered or the checkbox is left unticked, the simulation runs as a pure Markov chain with no external data or AI calls.
 
 ---
 
@@ -249,9 +250,9 @@ Row 0, column 4 = 0.300: following a capitulation session, there is a 30% probab
 
 **Monte Carlo Simulation** — 500 independent Geometric Brownian Motion paths are simulated over the chosen horizon. Percentile fan bands (P10/P25/P50/P75/P90) are shown on the chart. When the SVM has run successfully, the GBM drift is replaced by the SVM-conditioned expected return Σ P(state=i) × mean_return(i) — making the simulation regime-aware. If the SVM is unavailable, drift falls back to an OLS trend estimate on log-prices. An expandable **Model parameters** panel shows the drift source, active drift value, OLS baseline (when SVM is used), daily volatility, and number of paths.
 
-**AI Analysis** *(optional, requires API key + checkbox)* — A 3–5 paragraph summary written by Claude that interprets all three models' output in light of recent news. The prompt includes Markov, Monte Carlo, and SVM outputs so Claude can compare where they agree or diverge. Includes a sentiment banner explaining any starting-state adjustment and a Sources section with links to every article used. The pure Markov simulation is unaffected when this feature is disabled.
+**AI Analysis** *(optional, requires API key + checkbox)* — A 3–5 paragraph summary produced by your chosen AI provider that interprets all three models' output in light of recent news. The prompt includes Markov, Monte Carlo, and SVM outputs so the model can compare where they agree or diverge. Includes a sentiment banner explaining any starting-state adjustment and a Sources section with links to every article used. When **AI-summarize each source article** is enabled, each article additionally shows a one-sentence note explaining its relevance to the simulation result. The pure Markov simulation is unaffected when this feature is disabled.
 
-**Download Report** — A **Download PDF Report** button appears at the bottom of the results page. Clicking it generates and downloads a PDF containing every section: Markov metrics, transition matrix, state definitions, SVM probabilities, Monte Carlo parameters, AI analysis text, and news sources.
+**Download Report** — A **Download PDF Report** button appears at the bottom of the results page. Clicking it generates and downloads a PDF containing every section: Markov metrics, transition matrix, state definitions, SVM probabilities, Monte Carlo parameters, all matplotlib charts, AI analysis text, provider attribution badge, and news sources with optional per-article relevance summaries (rendered in blue).
 
 ---
 
@@ -290,7 +291,7 @@ stock-market-prediction/
 | `summary.py` | Prints state bins, the full transition matrix, and per-state mean returns in a readable format. |
 | `montecarlo.py` | Runs N independent GBM price paths. Drift is either estimated via OLS on log-prices or replaced by the SVM-conditioned expected return. Returns percentile fan bands (P10/25/50/75/90) and summary statistics. |
 | `svm_model.py` | Trains a `StandardScaler + SVC(kernel='rbf', probability=True)` pipeline on five lagged log-returns, rolling mean (5-day, 10-day), rolling volatility (5-day), and momentum. Exposes `predict_next_state_probs()` and `simulate_svm_prices()`. |
-| `rag.py` | Fetches recent news via yfinance, classifies sentiment using Claude tool use, builds a structured prompt that includes Markov, Monte Carlo, and SVM outputs, and calls the Claude API to generate an educational analysis. |
+| `rag.py` | Fetches recent news via yfinance, classifies sentiment, builds a structured prompt that includes Markov, Monte Carlo, and SVM outputs, and calls the chosen AI provider (Anthropic, OpenAI, Google Gemini, or DeepSeek) to generate an educational analysis. Optionally generates per-article relevance summaries in a single batched call. |
 
 ---
 
@@ -385,17 +386,27 @@ S(t+1) = S(t) × exp((μ − 0.5σ²) + σ × Z),   Z ~ N(0, 1)
 
 The **AI Analysis** feature is fully opt-in — the simulation runs as a pure Markov chain until you explicitly enable it. It uses Retrieval-Augmented Generation (RAG) to combine the model's quantitative output with qualitative context from recent news.
 
-**How to enable:** enter your Anthropic API key in the sidebar, tick **Generate AI Analysis**, then click Run Simulation.
+**Supported providers:**
+
+| Provider | Model used | Notes |
+|---|---|---|
+| **Anthropic (Claude)** | `claude-opus-4-6` | Sentiment via tool use; analysis with adaptive thinking |
+| **OpenAI** | `gpt-4o` | Sentiment and analysis via JSON response format |
+| **Google Gemini** | `gemini-2.0-flash` | OpenAI-compatible endpoint (`generativelanguage.googleapis.com`) |
+| **DeepSeek** | `deepseek-chat` | OpenAI-compatible endpoint (`api.deepseek.com`) |
+
+**How to enable:** select a provider from the sidebar dropdown, enter the corresponding API key, tick **Generate AI Analysis**, then click Run Simulation.
 
 **What happens when enabled:**
 
-1. **News sentiment classification** — `rag.py` fetches recent headlines via yfinance and calls `claude-opus-4-6` using tool use to return a structured sentiment score (−1 bearish, 0 neutral, +1 bullish) and a one-sentence explanation. If bearish, the simulation starts in the lowest state; if bullish, in the highest state; if neutral, the return-based state is used unchanged. A colour-coded banner in the UI explains the adjustment.
-2. **News fetching** — The same articles retrieved for sentiment are reused (no second network call).
-3. **Prompt construction** — All articles are included in a structured prompt alongside the outputs of all three models: the Markov chain simulation, the SVM's next-state probabilities, and the Monte Carlo percentile statistics. The prompt instructs Claude to compare where the models agree or diverge.
-4. **Claude API call** — The prompt is sent to `claude-opus-4-6` with adaptive thinking enabled. Claude synthesises the quantitative and qualitative signals into a 3–5 paragraph analysis.
-5. **Sources** — The articles used are surfaced in a collapsible Sources section in the UI, each with a clickable link to the original article.
+1. **News sentiment classification** — `rag.py` fetches recent headlines via yfinance and asks the chosen model to return a structured sentiment score (−1 bearish, 0 neutral, +1 bullish) with a one-sentence explanation. Anthropic uses tool use; other providers use JSON response format. If bearish, the simulation starts in the lowest state; if bullish, in the highest; if neutral, the return-based state is used unchanged. A colour-coded banner in the UI explains the adjustment.
+2. **News fetching** — The same articles retrieved for sentiment are reused (no second network call to Yahoo Finance).
+3. **Prompt construction** — All articles are included in a structured prompt alongside the outputs of all three models: the Markov chain simulation, the SVM's next-state probabilities, and the Monte Carlo percentile statistics. The prompt instructs the model to compare where they agree or diverge.
+4. **AI analysis call** — The prompt is sent to the chosen provider. Claude uses adaptive thinking; all others use standard chat completions. The model synthesises the quantitative and qualitative signals into a 3–5 paragraph analysis.
+5. **Source summarization** *(optional)* — If **AI-summarize each source article** is ticked, a single additional batched call is made asking for one relevance sentence per article, returned as a JSON array. These summaries are displayed in the Sources expander and included in the PDF in blue (`#0006b1`).
+6. **Sources** — The articles used are surfaced in a collapsible Sources section in the UI, each with a clickable link. If source summarization is enabled, each article shows an AI-generated sentence explaining its relevance to the simulation result.
 
-To use this feature you need an Anthropic API key from [console.anthropic.com](https://console.anthropic.com/).
+**PDF report** — The AI Analysis section of the PDF includes a colour-coded provider badge (e.g. orange for Anthropic, black for OpenAI, blue for Gemini/DeepSeek) next to the "Generated by" attribution line, followed by the analysis text. Source articles list the title, URL, and — when generated — the relevance summary in blue italic text.
 
 ---
 
@@ -429,10 +440,12 @@ This project is intended **for educational and research purposes ONLY**.
 |---|---|
 | `numpy` | Numerical computations (matrix math, quantiles, GBM paths) |
 | `pandas` | Data loading and manipulation |
+| `matplotlib` | Chart rendering for embedded PDF report figures |
 | `yfinance` | Downloading stock price data and news from Yahoo Finance |
 | `streamlit` | Web UI — interactive browser-based interface |
 | `scikit-learn` | SVM (RBF) classifier and `StandardScaler` pipeline |
-| `anthropic` | Claude API client — used for the optional AI Analysis feature |
+| `anthropic` | Claude API client — used when Anthropic is selected as the AI provider |
+| `openai` | OpenAI-compatible client — used for OpenAI, Google Gemini, and DeepSeek providers |
 | `fpdf2` | PDF report generation — no system dependencies required |
 
 ---
