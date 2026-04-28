@@ -318,6 +318,11 @@ def _generate_pdf(
                     pdf.set_text_color(31, 119, 180)
                     pdf.multi_cell(PW, 5, S(src["url"]), new_x="LMARGIN", new_y="NEXT")
                     pdf.set_text_color(0, 0, 0)
+                relevance = src.get("relevance_summary", "")
+                if relevance:
+                    pdf.set_font("Helvetica", "I", 9)
+                    pdf.multi_cell(PW, 5, S(relevance), new_x="LMARGIN", new_y="NEXT")
+                    pdf.set_font("Helvetica", "", 9)
                 pdf.ln(1)
 
         pdf.ln(3)
@@ -345,9 +350,70 @@ except ImportError:
 
 st.markdown("""
     <style>
-    [data-testid="stMetricValue"] { font-size: 1.8rem; }
-    [data-testid="stMetricDelta"] { font-size: 1.2rem; }
-    [data-testid="stMetricLabel"] { font-size: 1rem; }
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+    /* ── Global body & UI text ─────────────────────────────────────────── */
+    html, body, p, li, td, th, label, input,
+    .stMarkdown, .stAlert, .stCaptionContainer,
+    [data-testid="stSidebar"], [data-testid="stExpander"],
+    [data-testid="stDataFrame"], button {
+        font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif !important;
+    }
+
+    /* Exclude Material Icons from font override so expander arrows render correctly */
+    .material-icons, .material-icons-outlined, [class*="Icon"], [class*="icon"] {
+        font-family: 'Material Icons' !important;
+    }
+
+    /* ── Headings — editorial serif ────────────────────────────────────── */
+    h1, h2, h3, h4,
+    [data-testid="stHeading"],
+    .stTitle, .stHeader, .stSubheader {
+        font-family: 'Playfair Display', Georgia, 'Times New Roman', serif !important;
+        letter-spacing: -0.01em;
+    }
+
+    /* ── Metric values — monospace terminal feel ────────────────────────── */
+    [data-testid="stMetricValue"] {
+        font-family: 'IBM Plex Mono', 'Courier New', monospace !important;
+        font-size: 1.8rem;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+    }
+    [data-testid="stMetricDelta"] {
+        font-family: 'IBM Plex Mono', monospace !important;
+        font-size: 1.2rem;
+    }
+    [data-testid="stMetricLabel"] {
+        font-family: 'IBM Plex Sans', sans-serif !important;
+        font-size: 0.85rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+
+    /* ── Sidebar header ─────────────────────────────────────────────────── */
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        font-family: 'Playfair Display', Georgia, serif !important;
+    }
+
+    /* ── Dataframe / table text ─────────────────────────────────────────── */
+    .stDataFrame, .stTable, td, th {
+        font-family: 'IBM Plex Mono', monospace !important;
+        font-size: 0.82rem !important;
+    }
+
+    /* ── Code / caption ─────────────────────────────────────────────────── */
+    code, pre, .stCode {
+        font-family: 'IBM Plex Mono', 'Courier New', monospace !important;
+    }
+    [data-testid="stCaptionContainer"] p {
+        font-family: 'IBM Plex Sans', sans-serif !important;
+        font-size: 0.82rem !important;
+        letter-spacing: 0.01em;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -411,16 +477,41 @@ with st.sidebar:
 
     st.divider()
     st.header("AI Analysis (optional)")
-    anthropic_api_key = st.text_input(
-        "Anthropic API Key",
+    ai_provider = st.selectbox(
+        "Provider",
+        options=["Anthropic (Claude)", "OpenAI", "Google Gemini", "DeepSeek"],
+        index=0,
+        help="Choose which AI provider powers the news analysis.",
+    )
+    _provider_slug_map = {
+        "Anthropic (Claude)": "anthropic",
+        "OpenAI": "openai",
+        "Google Gemini": "gemini",
+        "DeepSeek": "deepseek",
+    }
+    _api_key_labels = {
+        "Anthropic (Claude)": "Anthropic API Key",
+        "OpenAI": "OpenAI API Key",
+        "Google Gemini": "Google AI API Key",
+        "DeepSeek": "DeepSeek API Key",
+    }
+    provider_slug = _provider_slug_map[ai_provider]
+    ai_api_key = st.text_input(
+        _api_key_labels[ai_provider],
         type="password",
-        help="Paste your Anthropic API key to enable AI-powered news analysis. Leave blank to skip.",
+        help="Paste your API key to enable AI-powered news analysis. Leave blank to skip.",
     )
     run_rag = st.checkbox(
         "Generate AI Analysis",
         value=False,
-        disabled=not anthropic_api_key,
-        help="Uses Claude + recent news to contextualise the simulation. Requires an API key.",
+        disabled=not ai_api_key,
+        help="Uses your chosen AI provider + recent news to contextualise the simulation. Requires an API key.",
+    )
+    summarize_sources = st.checkbox(
+        "AI-summarize each source article",
+        value=False,
+        disabled=not (ai_api_key and run_rag),
+        help="For each news article used, generate a one-sentence summary of its relevance to the simulation results. Uses an extra LLM call.",
     )
 
 # ── Main panel ────────────────────────────────────────────────────────────────
@@ -475,10 +566,10 @@ current_state = model.state_for_return(current_return)
 sentiment_data = None
 sim_start_state = current_state
 
-if run_rag and anthropic_api_key:
+if run_rag and ai_api_key:
     with st.spinner("Analyzing news sentiment to condition simulation..."):
         try:
-            sentiment_data = get_news_sentiment(ticker, anthropic_api_key)
+            sentiment_data = get_news_sentiment(ticker, ai_api_key, provider=provider_slug)
             s = sentiment_data["sentiment"]
             if s == -1:
                 sim_start_state = 0
@@ -623,7 +714,7 @@ st.divider()
 # ── SVM RBF Prediction ────────────────────────────────────────────────────────
 st.subheader("SVM (RBF) Prediction")
 st.caption(
-    "An SVM with an RBF kernel is trained on engineered features (lagged returns, "
+    "A Support Vector Machine (SVM) with a Radial Basis Function (RBF) kernel is trained on engineered features (lagged returns, "
     "rolling mean, volatility, momentum) to predict the next state at each step. "
     "Its regime probability output also conditions the Monte Carlo drift below."
 )
@@ -771,34 +862,44 @@ mc_col1.metric("Median End Price", f"${mc['median_end']:.2f}")
 mc_col2.metric("Pessimistic (P10)", f"${mc['p10_end']:.2f}")
 mc_col3.metric("Optimistic (P90)", f"${mc['p90_end']:.2f}")
 
+
 with st.expander("Model parameters"):
-    drift_label = mc["drift_source"]
-    param_text = (
-        f"Drift source: `{drift_label}` — `{mc['drift_daily'] * 100:+.4f}%/day`"
-    )
+    _params = [
+        ("Drift Source", mc["drift_source"]),
+        ("Daily Drift", f"{mc['drift_daily'] * 100:+.4f}%"),
+    ]
     if mc["drift_source"] == "SVM-conditioned":
-        param_text += f"  ·  OLS baseline: `{mc['drift_ols'] * 100:+.4f}%/day`"
-    param_text += (
-        f"  ·  Daily volatility: `{mc['sigma_daily'] * 100:.4f}%`"
-        f"  ·  Paths: `{mc['n_simulations']}`"
+        _params.append(("OLS Baseline", f"{mc['drift_ols'] * 100:+.4f}%"))
+    _params += [
+        ("Daily Volatility", f"{mc['sigma_daily'] * 100:.4f}%"),
+        ("Simulated Paths", f"{mc['n_simulations']:,}"),
+    ]
+    _cells = "".join(
+        f'<td style="padding:0 18px 0 0; white-space:nowrap;">'
+        f'<span style="display:block;font-size:0.68rem;font-weight:600;letter-spacing:0.07em;'
+        f'text-transform:uppercase;color:#888;font-family:\'IBM Plex Sans\',sans-serif;">{k}</span>'
+        f'<span style="font-size:0.9rem;font-weight:500;font-family:\'IBM Plex Mono\',monospace;">{v}</span>'
+        f'</td>'
+        for k, v in _params
     )
-    st.caption(param_text)
+    st.markdown(f'<table style="border:none;border-collapse:collapse;margin:4px 0 2px 0;"><tr>{_cells}</tr></table>', unsafe_allow_html=True)
 
 st.divider()
 
 # ── AI Analysis (RAG) ─────────────────────────────────────────────────────────
 rag_result = None
-if run_rag and anthropic_api_key:
+if run_rag and ai_api_key:
     st.subheader("AI Analysis")
     st.caption(
-        "Claude reads recent news about this ticker and combines it with the Markov model "
+        f"{ai_provider} reads recent news about this ticker and combines it with the Markov model "
         "output to produce an educational summary. This is NOT financial advice."
     )
     with st.spinner("Fetching news and generating analysis..."):
         try:
             result = run_rag_analysis(
                 ticker=ticker,
-                api_key=anthropic_api_key,
+                api_key=ai_api_key,
+                provider=provider_slug,
                 current_price=float(prices.iloc[-1]),
                 simulated_end_price=float(simulation.iloc[-1]),
                 sim_change_pct=float(simulation.iloc[-1] / float(prices.iloc[-1]) - 1) * 100,
@@ -811,6 +912,7 @@ if run_rag and anthropic_api_key:
                 monte_carlo=mc,
                 svm_probs=svm_probs,
                 state_labels=state_labels,
+                summarize_sources=summarize_sources,
             )
             rag_result = result
             st.markdown(result["analysis"])
@@ -821,12 +923,16 @@ if run_rag and anthropic_api_key:
                     for i, src in enumerate(sources, start=1):
                         title = src["title"] or "Untitled"
                         url = src["url"]
-                        summary = src["text"][:280].rstrip() + ("…" if len(src["text"]) > 280 else "")
                         if url:
                             st.markdown(f"**{i}. [{title}]({url})**")
                         else:
                             st.markdown(f"**{i}. {title}**")
-                        st.caption(summary)
+                        ai_summary = src.get("relevance_summary")
+                        if ai_summary:
+                            st.caption(f"**Relevance:** {ai_summary}")
+                        else:
+                            fallback = src["text"][:280].rstrip() + ("…" if len(src["text"]) > 280 else "")
+                            st.caption(fallback)
                         if i < len(sources):
                             st.divider()
         except ImportError as e:
@@ -837,7 +943,7 @@ if run_rag and anthropic_api_key:
         except Exception as e:
             st.error(f"AI analysis failed: {e}")
     st.divider()
-elif run_rag and not anthropic_api_key:
+elif run_rag and not ai_api_key:
     st.info("Enter your Anthropic API key in the sidebar to enable AI analysis.")
     st.divider()
 

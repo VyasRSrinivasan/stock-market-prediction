@@ -4,5 +4,6 @@ matplotlib
 yfinance
 streamlit
 anthropic
+openai
 scikit-learn
 fpdf2
