@@ -11,7 +11,7 @@ Here is the basic idea:
 4. It uses that matrix to randomly simulate probable future price paths.
 5. An **SVM with an RBF kernel** is trained on engineered features (lagged returns, rolling statistics, momentum) to predict the probability distribution over the next state.
 6. A **Monte Carlo (GBM) simulation** runs 500 independent price paths. When the SVM is available, its regime probabilities replace the OLS drift estimate, making the simulation regime-aware.
-7. Optionally, it retrieves recent news headlines and passes all three models' outputs to your chosen AI provider (Anthropic Claude, OpenAI, Google Gemini, or DeepSeek) to generate a contextual analysis, with optional per-article relevance summaries.
+7. Optionally, it retrieves recent news headlines and passes all three models' outputs to your chosen AI provider (Groq, Anthropic Claude, OpenAI, Google Gemini, or DeepSeek) to generate a contextual analysis, with optional per-article relevance summaries. **Groq is the default provider and is free — no API key required when using the hosted app.**
 8. All results can be **downloaded as a PDF report** with a single click.
 
 ---
@@ -35,7 +35,7 @@ Rather than trying to predict exact future prices (which is not reliably possibl
 - Use the fitted model to **simulate future price paths** by randomly sampling state transitions.
 - Train an **SVM (RBF) classifier** on engineered features to predict the next-state probability distribution and simulate an alternative price path.
 - Run a **Monte Carlo (GBM) simulation** whose drift is conditioned on the SVM's regime probabilities when available, otherwise falling back to an OLS trend estimate.
-- Optionally layer in **AI-powered news analysis** using a choice of provider (Anthropic Claude, OpenAI, Google Gemini, or DeepSeek) — the model is given all three quantitative outputs and synthesises them with recent headlines. Optionally generate an AI relevance summary for each source article.
+- Optionally layer in **AI-powered news analysis** using a choice of provider (Groq, Anthropic Claude, OpenAI, Google Gemini, or DeepSeek) — the model is given all three quantitative outputs and synthesises them with recent headlines. Optionally generate an AI relevance summary for each source article. **Groq is the default and free — no API key needed on the hosted app.**
 - Allow users to **download a PDF report** of every result with a single button click, including charts, AI analysis, provider attribution, and per-article relevance summaries.
 - Provide a clean, beginner-friendly example of applying Markov chains and ML to financial time series data.
 
@@ -63,24 +63,39 @@ pip --version
 
 An API key is only needed for the optional **AI Analysis** feature. The Markov chain simulation works without one.
 
-The app supports four providers. Use whichever you already have access to — all four work identically once a key is entered.
+**Groq is the default provider and requires no API key** when using the hosted app — a shared key is provided automatically. Simply tick **Generate AI Analysis** and run.
 
-| Provider | Where to get a key |
-|---|---|
-| **Anthropic (Claude)** | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
-| **OpenAI** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| **Google Gemini** | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
-| **DeepSeek** | [platform.deepseek.com/api-keys](https://platform.deepseek.com/api-keys) |
+If you are self-hosting or want to use your own quota, the app supports five providers:
+
+| Provider | Free tier | Where to get a key |
+|---|---|---|
+| **Groq (Free)** | Yes — generous free tier, no credit card | [console.groq.com](https://console.groq.com) |
+| **Anthropic (Claude)** | No | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
+| **OpenAI** | No | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **Google Gemini** | Yes — limited free tier | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
+| **DeepSeek** | No | [platform.deepseek.com/api-keys](https://platform.deepseek.com/api-keys) |
 
 **How to add your key to the app:**
 
 1. In the sidebar under **AI Analysis (optional)**, select your provider from the **Provider** dropdown.
-2. Paste your API key into the field that appears (labelled with your chosen provider's name). It is masked as a password and is never stored beyond your browser session.
+2. Optionally paste your own API key — leaving the field blank will use the shared app key if one is configured.
 3. Tick **Generate AI Analysis** and click **Run Simulation**.
 
 The AI Analysis makes two API calls per run — one for sentiment classification and one for the full analysis — so costs are minimal regardless of provider.
 
-> **Security note:** Never commit your API key to version control. You can also supply it via an environment variable (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) and read it in `rag.py` via `os.environ.get(...)` to skip the sidebar input.
+**For app owners — configuring shared keys via Streamlit Secrets:**
+
+Place provider keys in `.streamlit/secrets.toml` (local) or in **App settings → Secrets** on Streamlit Community Cloud. The app uses these as fallbacks when a user leaves the key field blank:
+
+```toml
+GROQ_API_KEY      = "gsk_..."    # recommended — free tier
+ANTHROPIC_API_KEY = "sk-ant-..."
+OPENAI_API_KEY    = "sk-proj-..."
+GEMINI_API_KEY    = "AIza..."
+DEEPSEEK_API_KEY  = "sk-..."
+```
+
+> **Security note:** `secrets.toml` is gitignored by default in this repo. Never commit real keys. Users who enter their own key always take priority over the shared key.
 
 ---
 
@@ -143,7 +158,7 @@ A browser tab will open automatically at `http://localhost:8501`.
 - Adjust the simulation horizon with a slider (5–60 trading days)
 - Set a random seed for reproducible results
 - Click **Run Simulation** to see:
-  - A line chart of the simulated price path with high/low reference lines
+  - A line chart of the simulated price path with actual business dates on the x-axis and high/low reference lines
   - Start price, end price, and simulated % change
   - **Simulated High** (value and % shown in green) and **Simulated Low** (value and % shown in red, with highlighted badges)
   - **Current State** and **Most Likely Next State** metric cards, each showing the state label (e.g. State 0), its regime name (e.g. Capitulation), a **Schwab-style letter grade** (F through A), and the corresponding analyst rating meaning (e.g. *Strongly Underperform* → *Strongly Outperform*)
@@ -159,8 +174,8 @@ A browser tab will open automatically at `http://localhost:8501`.
 
 The AI Analysis feature is entirely opt-in and does not affect the simulation unless explicitly enabled:
 
-1. Select a provider from the **Provider** dropdown (Anthropic, OpenAI, Google Gemini, or DeepSeek). A colour-coded logo badge for the selected provider is shown above the dropdown.
-2. Paste your API key for that provider into the field below.
+1. Select a provider from the **Provider** dropdown (**Groq (Free)** is the default — no key needed). A colour-coded logo badge for the selected provider is shown above the dropdown.
+2. Optionally paste your own API key — leaving it blank uses the shared app key if configured.
 3. Tick **Generate AI Analysis**.
 4. Optionally tick **AI-summarize each source article** to generate a one-sentence relevance note for each news article (uses one additional API call).
 5. Click **Run Simulation**.
@@ -169,7 +184,7 @@ When enabled, two things happen before results are shown:
 - **News sentiment classification** — the selected model reads the latest headlines for the ticker and classifies sentiment as bearish (−1), neutral (0), or bullish (+1). A banner explains whether and how the simulation's starting state was adjusted based on this signal.
 - **Full AI analysis** — the model combines the Markov, SVM, and Monte Carlo outputs with recent news to produce a 3–5 paragraph educational summary. A collapsible **Sources** section lists every article used, with clickable links. If source summarization is enabled, each article also shows an AI-generated sentence explaining its relevance to the simulation result.
 
-If no API key is entered or the checkbox is left unticked, the simulation runs as a pure Markov chain with no external data or AI calls.
+If the checkbox is left unticked, the simulation runs as a pure Markov chain with no external data or AI calls.
 
 ---
 
@@ -252,7 +267,7 @@ Row 0, column 4 = 0.300: following a capitulation session, there is a 30% probab
 
 **AI Analysis** *(optional, requires API key + checkbox)* — A 3–5 paragraph summary produced by your chosen AI provider that interprets all three models' output in light of recent news. The prompt includes Markov, Monte Carlo, and SVM outputs so the model can compare where they agree or diverge. Includes a sentiment banner explaining any starting-state adjustment and a Sources section with links to every article used. When **AI-summarize each source article** is enabled, each article additionally shows a one-sentence note explaining its relevance to the simulation result. The pure Markov simulation is unaffected when this feature is disabled.
 
-**Download Report** — A **Download PDF Report** button appears at the bottom of the results page. Clicking it generates and downloads a PDF containing every section: Markov metrics, transition matrix, state definitions, SVM probabilities, Monte Carlo parameters, all matplotlib charts, AI analysis text, provider attribution badge, and news sources with optional per-article relevance summaries (rendered in blue).
+**Download Report** — A **Download PDF Report** button appears at the bottom of the results page. Clicking it generates and downloads a PDF containing every section: Markov metrics, transition matrix, state definitions, SVM probabilities, Monte Carlo parameters, all matplotlib charts (with actual business dates on the x-axis), AI analysis text, provider attribution badge, and news sources with optional per-article relevance summaries (rendered in blue).
 
 ---
 
@@ -272,7 +287,9 @@ stock-market-prediction/
 │   ├── summary.py           # Print a human-readable model summary
 │   ├── montecarlo.py        # Monte Carlo (GBM) simulation with OLS / SVM-conditioned drift
 │   ├── svm_model.py         # SVM (RBF) next-state classifier and price simulator
-│   └── rag.py               # AI Analysis — news fetching and Claude API integration
+│   └── rag.py               # AI Analysis — news fetching and multi-provider LLM integration
+├── .streamlit/
+│   └── secrets.toml         # Provider API keys (gitignored) — used as shared fallback keys
 ├── markov_stock_prediction.py   # CLI entry point — thin wrapper around the package
 ├── app.py                       # Streamlit web UI
 ├── requirements.txt             # Python dependencies
@@ -291,7 +308,7 @@ stock-market-prediction/
 | `summary.py` | Prints state bins, the full transition matrix, and per-state mean returns in a readable format. |
 | `montecarlo.py` | Runs N independent GBM price paths. Drift is either estimated via OLS on log-prices or replaced by the SVM-conditioned expected return. Returns percentile fan bands (P10/25/50/75/90) and summary statistics. |
 | `svm_model.py` | Trains a `StandardScaler + SVC(kernel='rbf', probability=True)` pipeline on five lagged log-returns, rolling mean (5-day, 10-day), rolling volatility (5-day), and momentum. Exposes `predict_next_state_probs()` and `simulate_svm_prices()`. |
-| `rag.py` | Fetches recent news via yfinance, classifies sentiment, builds a structured prompt that includes Markov, Monte Carlo, and SVM outputs, and calls the chosen AI provider (Anthropic, OpenAI, Google Gemini, or DeepSeek) to generate an educational analysis. Optionally generates per-article relevance summaries in a single batched call. |
+| `rag.py` | Fetches recent news via yfinance, classifies sentiment, builds a structured prompt that includes Markov, Monte Carlo, and SVM outputs, and calls the chosen AI provider (Groq, Anthropic, OpenAI, Google Gemini, or DeepSeek) to generate an educational analysis. Optionally generates per-article relevance summaries in a single batched call. |
 
 ---
 
@@ -496,14 +513,15 @@ The **AI Analysis** feature is fully opt-in — the simulation runs as a pure Ma
 
 **Supported providers:**
 
-| Provider | Model used | Notes |
-|---|---|---|
-| **Anthropic (Claude)** | `claude-opus-4-6` | Sentiment via tool use; analysis with adaptive thinking |
-| **OpenAI** | `gpt-4o` | Sentiment and analysis via JSON response format |
-| **Google Gemini** | `gemini-2.0-flash` | OpenAI-compatible endpoint (`generativelanguage.googleapis.com`) |
-| **DeepSeek** | `deepseek-chat` | OpenAI-compatible endpoint (`api.deepseek.com`) |
+| Provider | Model used | Free? | Notes |
+|---|---|---|---|
+| **Groq (Free)** | `llama-3.3-70b-versatile` | Yes | Default — no key needed on hosted app; OpenAI-compatible endpoint |
+| **Anthropic (Claude)** | `claude-opus-4-6` | No | Sentiment via tool use; analysis with adaptive thinking |
+| **OpenAI** | `gpt-4o` | No | Sentiment and analysis via JSON response format |
+| **Google Gemini** | `gemini-2.0-flash` | Limited | OpenAI-compatible endpoint (`generativelanguage.googleapis.com`) |
+| **DeepSeek** | `deepseek-chat` | No | OpenAI-compatible endpoint (`api.deepseek.com`) |
 
-**How to enable:** select a provider from the sidebar dropdown, enter the corresponding API key, tick **Generate AI Analysis**, then click Run Simulation.
+**How to enable:** select a provider from the sidebar dropdown (Groq is pre-selected), optionally enter your own API key, tick **Generate AI Analysis**, then click Run Simulation. On the hosted app, Groq works without any key.
 
 **What happens when enabled:**
 
@@ -553,7 +571,7 @@ This project is intended **for educational and research purposes ONLY**.
 | `streamlit` | Web UI — interactive browser-based interface |
 | `scikit-learn` | SVM (RBF) classifier and `StandardScaler` pipeline |
 | `anthropic` | Claude API client — used when Anthropic is selected as the AI provider |
-| `openai` | OpenAI-compatible client — used for OpenAI, Google Gemini, and DeepSeek providers |
+| `openai` | OpenAI-compatible client — used for Groq, OpenAI, Google Gemini, and DeepSeek providers |
 | `fpdf2` | PDF report generation — no system dependencies required |
 
 ---
