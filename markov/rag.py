@@ -21,10 +21,11 @@ import yfinance as yf
 # ── Provider configuration ────────────────────────────────────────────────────
 
 _PROVIDER_CONFIG: dict[str, dict[str, str | None]] = {
-    "anthropic": {"model": "claude-opus-4-6",    "base_url": None},
-    "openai":    {"model": "gpt-4o",             "base_url": None},
-    "gemini":    {"model": "gemini-2.0-flash",   "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"},
-    "deepseek":  {"model": "deepseek-chat",      "base_url": "https://api.deepseek.com"},
+    "anthropic": {"model": "claude-opus-4-6",          "base_url": None},
+    "openai":    {"model": "gpt-4o",                   "base_url": None},
+    "gemini":    {"model": "gemini-2.0-flash",         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"},
+    "deepseek":  {"model": "deepseek-chat",            "base_url": "https://api.deepseek.com"},
+    "groq":      {"model": "llama-3.3-70b-versatile",  "base_url": "https://api.groq.com/openai/v1"},
 }
 
 _SYSTEM_PROMPT = (
