@@ -146,10 +146,10 @@ A browser tab will open automatically at `http://localhost:8501`.
   - A line chart of the simulated price path with high/low reference lines
   - Start price, end price, and simulated % change
   - **Simulated High** (value and % shown in green) and **Simulated Low** (value and % shown in red, with highlighted badges)
-  - Current and most likely next market state
+  - **Current State** and **Most Likely Next State** metric cards, each showing the state label (e.g. State 0), its regime name (e.g. Capitulation), a **Schwab-style letter grade** (F through A), and the corresponding analyst rating meaning (e.g. *Strongly Underperform* → *Strongly Outperform*)
   - Transition matrix
-  - State definitions table (return range, mean return, observation count)
-  - **SVM (RBF) Prediction** — a separate price path simulated by the SVM model, end-price metrics, and a bar chart of the predicted next-state probability distribution
+  - **State Definitions table** — return range, mean return, observation count, regime name, letter grade, and rating meaning for every state. An expandable **"What do these states mean?"** legend explains each active state with a colour dot, regime name, grade badge, and plain-English description
+  - **SVM (RBF) Prediction** — a separate price path simulated by the SVM model, end-price metrics, a bar chart of the predicted next-state probability distribution, and an inline grade badge on the most likely next state
   - **Monte Carlo Simulation** — a fan chart of 500 GBM paths showing the P10/P25/P50/P75/P90 percentile bands, with median, pessimistic (P10), and optimistic (P90) end prices. The drift is automatically conditioned on SVM regime probabilities when available; a compact **Model parameters** panel shows drift source, active drift, OLS baseline, daily volatility, and path count.
   - **Download Report** — a button at the bottom that exports all results as a PDF including all charts
 
@@ -246,7 +246,7 @@ Row 0, column 4 = 0.300: following a capitulation session, there is a 30% probab
 
 **Simulated high / low** — The maximum and minimum prices reached during the simulated path, shown as dashed green/red reference lines on the chart. The metric cards display the high value and percentage in green and the low value and percentage in red (with a highlighted badge) for quick visual scanning.
 
-**SVM (RBF) Prediction** — An SVM classifier trained on five lagged log-returns, rolling mean (5-day and 10-day), rolling volatility (5-day), and momentum predicts the probability of each state occurring next. The most likely state and its probability are shown above a bar chart of the full distribution. The SVM also simulates its own price path by rolling forward, re-computing features from each newly simulated return.
+**SVM (RBF) Prediction** — An SVM classifier trained on five lagged log-returns, rolling mean (5-day and 10-day), rolling volatility (5-day), and momentum predicts the probability of each state occurring next. The most likely state is displayed with its regime name, Schwab letter grade, and rating meaning alongside the probability. A bar chart shows the full distribution across all states. The SVM also simulates its own price path by rolling forward, re-computing features from each newly simulated return.
 
 **Monte Carlo Simulation** — 500 independent Geometric Brownian Motion paths are simulated over the chosen horizon. Percentile fan bands (P10/P25/P50/P75/P90) are shown on the chart. When the SVM has run successfully, the GBM drift is replaced by the SVM-conditioned expected return Σ P(state=i) × mean_return(i) — making the simulation regime-aware. If the SVM is unavailable, drift falls back to an OLS trend estimate on log-prices. An expandable **Model parameters** panel shows the drift source, active drift value, OLS baseline (when SVM is used), daily volatility, and number of paths.
 
@@ -312,33 +312,141 @@ Because the model is stochastic, running it twice with different seed values pro
 
 ---
 
-## Market States — Financial Interpretation
+## Market States — Nomenclature & Financial Interpretation
 
-Each state in the Markov chain corresponds to a **daily return regime** calibrated from historical price data. Below is the financial analyst interpretation for each bucketing schema.
+Each state in the Markov chain corresponds to a **daily return regime** calibrated from historical price data. States are labelled with practitioner-standard names drawn from technical analysis and institutional trading terminology. Every state also carries a **Schwab-style letter grade** (F through A) that maps directly to the analyst rating scale used by major brokerages: F = Strongly Underperform, D = Underperform, C = Market Perform, B = Outperform, A = Strongly Outperform. Plus (+) and minus (−) modifiers are used for finer gradations when more than five states are active.
 
-### Quantile States (3–10 states)
+These grades and regime names are shown throughout the app — on the Current State and Most Likely Next State metric cards, in the State Definitions table, in the "What do these states mean?" expander, and on the SVM most likely next state caption — making the model output directly interpretable without reference to raw return percentiles.
 
-With the default 5-state quantile schema, states map to the following market conditions:
+### Schwab Letter Grade Scale
 
-| State | Percentile Band | Financial Interpretation |
+| Grade | Analyst Rating | Signal |
 |---|---|---|
-| **State 0** | Bottom quintile (≤ P20) | **Capitulation / Severe Drawdown** — returns in the lowest 20th percentile, characteristic of panic selling, risk-off cascade events, gap-downs on adverse macro data or earnings shocks, or forced liquidation. Sustained occupancy in this state implies elevated drawdown velocity and deteriorating price momentum. |
-| **State 1** | P20–P40 | **Mild Distribution / Corrective Pressure** — below-median returns reflecting moderate selling pressure, consistent with profit-taking, sector rotation out of the name, or softening buying conviction. Often precedes either a recovery to consolidation or a further deterioration into State 0. |
-| **State 2** | P40–P60 (median) | **Consolidation / Range-Bound Session** — returns near the median, representing equilibrium between supply and demand. Price action is choppy or sideways, consistent with low-conviction tape. Frequently precedes a volatility-expansion event in either direction. |
-| **State 3** | P60–P80 | **Accumulation / Moderate Upside** — above-median returns, consistent with constructive price action, institutional accumulation, positive earnings revisions, or improving risk sentiment and breadth. |
-| **State 4** | Top quintile (≥ P80) | **Strong Momentum / Breakout Session** — returns in the top 20th percentile, characteristic of bullish momentum, gap-ups on catalysts (earnings beat, analyst upgrade, positive macro surprise), or breakout from a prior consolidation range. Sustained occupancy signals strong positive price momentum but may also indicate near-term overbought conditions. |
+| **A** | Strongly Outperform | Strong bullish conviction — consider adding to portfolio |
+| **A−** | Outperform+ | High bullish conviction |
+| **B** | Outperform | Constructive — above-market expected return |
+| **B−** | Outperform– | Mild positive conviction |
+| **C+** | Market Perform+ | Slightly above neutral |
+| **C** | Market Perform | Neutral — hold existing position, no action needed |
+| **C−** | Market Perform– | Slightly below neutral |
+| **D+** | Underperform+ | Mild negative conviction |
+| **D** | Underperform | Weak — consider whether to hold or reduce |
+| **D−** | Underperform– | High negative conviction |
+| **F** | Strongly Underperform | Strong bearish signal — consider reducing or avoiding |
 
-With more granular state counts (e.g. 10 states), each bin spans a narrower decile of the return distribution, allowing the model to distinguish finer gradations such as moderate versus severe drawdown, or mild accumulation versus a full breakout session.
+The grade assigned to each state is determined purely by its **rank position** in the return distribution — State 0 always receives F, the top state always receives A, regardless of the absolute return values. Grades at intermediate positions are interpolated from the table below.
 
-### Volume States (Low / Average / High)
+---
 
-The three-state volume schema maps directly to classic technical regime labels:
+### Quantile State Nomenclature
 
-| State | Threshold | Financial Interpretation |
-|---|---|---|
-| **Low** | Return < μ − 0.5σ | **Bearish Regime** — the day's return falls meaningfully below the security's historical average, consistent with a risk-off environment, distribution phase, downtrend continuation, or short-side pressure. Elevated autocorrelation within this state (high Low→Low transition probability) signals persistent bearish momentum rather than a transient dip. |
-| **Average** | μ − 0.5σ ≤ Return ≤ μ + 0.5σ | **Neutral / Indecisive Regime** — the day's return is within one-half standard deviation of the historical mean, reflecting balanced order flow, range-bound tape, or a digestion phase following a directional move. The Average state acts as a transitional regime; the transition probabilities out of it indicate whether the security tends to revert to trend or break out. |
-| **High** | Return > μ + 0.5σ | **Bullish Regime** — the day's return materially exceeds the historical average, consistent with an accumulation phase, trend-continuation session, breakout from prior resistance, or positive catalyst event. High autocorrelation within this state signals persistent positive momentum and a favourable near-term technical backdrop. |
+The state names vary with the number of states selected. Each name maps to a specific slice of the historical daily return distribution.
+
+#### 3 States
+
+| # | Grade | Name | Percentile Band | Regime Signal |
+|---|---|---|---|---|
+| 0 | **F** | **Bear** | Bottom tercile (≤ P33) | Persistent selling pressure, downtrend, or risk-off |
+| 1 | **C** | **Neutral** | P33–P67 (median band) | Range-bound, balanced order flow, no directional conviction |
+| 2 | **A** | **Bull** | Top tercile (≥ P67) | Positive momentum, accumulation, or trend-continuation |
+
+#### 4 States
+
+| # | Grade | Name | Percentile Band | Regime Signal |
+|---|---|---|---|---|
+| 0 | **F** | **Drawdown** | ≤ P25 | Significant decline, elevated selling, negative momentum |
+| 1 | **D** | **Correction** | P25–P50 | Below-median returns, mild distribution or profit-taking |
+| 2 | **B** | **Recovery** | P50–P75 | Above-median returns, constructive tape, early accumulation |
+| 3 | **A** | **Breakout** | ≥ P75 | Strong upside, momentum continuation, or positive catalyst |
+
+#### 5 States *(default)*
+
+| # | Grade | Name | Percentile Band | Regime Signal |
+|---|---|---|---|---|
+| 0 | **F** | **Capitulation** | ≤ P20 | Panic selling, forced liquidation, gap-downs, severe drawdown |
+| 1 | **D** | **Distribution** | P20–P40 | Below-median pressure, profit-taking, softening conviction |
+| 2 | **C** | **Consolidation** | P40–P60 | Equilibrium, sideways tape, low-conviction range-bound session |
+| 3 | **B** | **Accumulation** | P60–P80 | Constructive action, institutional buying, improving breadth |
+| 4 | **A** | **Momentum** | ≥ P80 | Strong upside, bullish catalyst, breakout from prior range |
+
+#### 6 States
+
+| # | Grade | Name | Percentile Band | Regime Signal |
+|---|---|---|---|---|
+| 0 | **F** | **Capitulation** | ≤ P17 | Panic, forced selling, severe drawdown |
+| 1 | **D** | **Distribution** | P17–P33 | Moderate decline, distribution phase |
+| 2 | **C−** | **Drift Down** | P33–P50 | Mild below-median weakness, soft tape |
+| 3 | **C+** | **Drift Up** | P50–P67 | Mild above-median strength, tentative buying |
+| 4 | **B** | **Accumulation** | P67–P83 | Constructive, institutional support |
+| 5 | **A** | **Momentum** | ≥ P83 | Strong rally, breakout, catalyst-driven upside |
+
+#### 7 States
+
+| # | Grade | Name | Percentile Band | Regime Signal |
+|---|---|---|---|---|
+| 0 | **F** | **Panic** | ≤ P14 | Extreme selloff, margin calls, fear-driven liquidation |
+| 1 | **D−** | **Capitulation** | P14–P29 | Heavy drawdown, persistent selling |
+| 2 | **D** | **Distribution** | P29–P43 | Moderate weakness, profit-taking |
+| 3 | **C** | **Consolidation** | P43–P57 | Balanced, indecisive, range-bound |
+| 4 | **B** | **Accumulation** | P57–P71 | Moderate upside, constructive tape |
+| 5 | **A−** | **Rally** | P71–P86 | Strong positive momentum |
+| 6 | **A** | **Breakout** | ≥ P86 | Explosive upside, catalyst-driven surge |
+
+#### 8 States
+
+| # | Grade | Name | Percentile Band | Regime Signal |
+|---|---|---|---|---|
+| 0 | **F** | **Panic** | ≤ P12.5 | Extreme fear, forced liquidation |
+| 1 | **D−** | **Capitulation** | P12.5–P25 | Heavy sustained selling |
+| 2 | **D** | **Distribution** | P25–P37.5 | Moderate decline, supply overhang |
+| 3 | **C−** | **Drift Down** | P37.5–P50 | Mild below-median weakness |
+| 4 | **C+** | **Drift Up** | P50–P62.5 | Mild above-median strength |
+| 5 | **B** | **Accumulation** | P62.5–P75 | Constructive buying, institutional activity |
+| 6 | **A−** | **Rally** | P75–P87.5 | Strong upside, positive momentum |
+| 7 | **A** | **Breakout** | ≥ P87.5 | Explosive gain, catalyst-driven surge |
+
+#### 9 States
+
+| # | Grade | Name | Percentile Band | Regime Signal |
+|---|---|---|---|---|
+| 0 | **F** | **Panic** | ≤ P11 | Extreme selloff |
+| 1 | **D−** | **Capitulation** | P11–P22 | Heavy drawdown |
+| 2 | **D** | **Distribution** | P22–P33 | Moderate selling |
+| 3 | **D+** | **Mild Distribution** | P33–P44 | Soft tape, mild weakness |
+| 4 | **C** | **Consolidation** | P44–P56 | Balanced, no direction |
+| 5 | **B−** | **Mild Accumulation** | P56–P67 | Tentative buying |
+| 6 | **B** | **Accumulation** | P67–P78 | Constructive, institutional support |
+| 7 | **A−** | **Rally** | P78–P89 | Strong upside |
+| 8 | **A** | **Breakout** | ≥ P89 | Explosive surge |
+
+#### 10 States
+
+| # | Grade | Name | Percentile Band | Regime Signal |
+|---|---|---|---|---|
+| 0 | **F** | **Panic** | ≤ P10 | Extreme fear, flash crash behavior |
+| 1 | **D−** | **Capitulation** | P10–P20 | Forced liquidation, severe drawdown |
+| 2 | **D** | **Distribution** | P20–P30 | Heavy selling pressure |
+| 3 | **D+** | **Mild Distribution** | P30–P40 | Below-median weakness, profit-taking |
+| 4 | **C−** | **Drift Down** | P40–P50 | Soft, slightly below neutral |
+| 5 | **C+** | **Drift Up** | P50–P60 | Soft, slightly above neutral |
+| 6 | **B−** | **Mild Accumulation** | P60–P70 | Constructive, early buying |
+| 7 | **B** | **Accumulation** | P70–P80 | Institutional buying, improving breadth |
+| 8 | **A−** | **Rally** | P80–P90 | Strong positive momentum |
+| 9 | **A** | **Breakout** | ≥ P90 | Explosive upside, catalyst-driven surge |
+
+---
+
+### Volume State Nomenclature
+
+The three-state volume schema uses fixed labels regardless of the number of states selected:
+
+| Grade | Name | Threshold | Regime Signal |
+|---|---|---|---|
+| **F** | **Low** | Return < μ − 0.5σ | Bearish — return falls meaningfully below the historical average; risk-off, downtrend, distribution phase |
+| **C** | **Average** | μ − 0.5σ ≤ Return ≤ μ + 0.5σ | Neutral — return within half a standard deviation of the mean; balanced order flow, transitional tape |
+| **A** | **High** | Return > μ + 0.5σ | Bullish — return materially exceeds the historical average; accumulation, trend continuation, positive catalyst |
+
+---
 
 ### Reading the Transition Matrix as a Practitioner
 
@@ -346,8 +454,8 @@ The transition matrix is the core quantitative output of the Markov model. Each 
 
 Key patterns to look for:
 
-- **High diagonal values (T[i][i] > 0.5)** — strong **regime persistence**. Bearish regimes that tend to stay bearish (high T[0][0]) suggest downside momentum; bullish regimes that remain bullish (high T[N-1][N-1]) suggest positive momentum continuation.
-- **High off-diagonal T[0][N-1] or T[N-1][0]** — elevated **mean-reversion probability**. A high probability of jumping from the lowest state directly to the highest (or vice versa) is characteristic of high-volatility, whipsaw-prone securities.
+- **High diagonal values (T[i][i] > 0.5)** — strong **regime persistence**. A Capitulation state that tends to stay in Capitulation (high T[0][0]) signals downside momentum; a Momentum state that stays in Momentum (high T[N-1][N-1]) signals bullish continuation.
+- **High off-diagonal T[0][N-1] or T[N-1][0]** — elevated **mean-reversion probability**. A high probability of jumping directly from Panic to Breakout (or vice versa) is characteristic of high-volatility, whipsaw-prone securities.
 - **Flat rows (all values ≈ 1/N)** — **regime-agnostic transitions**, meaning the next day's return is essentially independent of today's. This implies the Markov assumption adds little predictive value for this security over the chosen period.
 - **Skewed rows toward higher states** — regardless of the current regime, the security tends to drift upward, indicating a secular bullish bias in the historical sample. The reverse skew signals a bearish secular trend.
 
@@ -355,7 +463,7 @@ Key patterns to look for:
 
 The **Current State** shown in the UI reflects the regime into which the most recent trading day's return falls, given the model's calibrated bin edges. This is the starting point for all forward simulations.
 
-The **Most Likely Next State** is the column j in the current state's transition row T[current_state][j] with the highest probability. It is the single-step modal forecast under the Markov model — not a certainty, but the historically most probable next regime. When the AI Analysis feature is enabled, Claude's news-sentiment signal may override the starting state: a **bearish** sentiment score anchors the simulation in the lowest regime (State 0 / Low), and a **bullish** score anchors it in the highest regime, reflecting the qualitative macro or company-specific context that pure return history cannot capture.
+The **Most Likely Next State** is the column j in the current state's transition row T[current_state][j] with the highest probability. It is the single-step modal forecast under the Markov model — not a certainty, but the historically most probable next regime. When the AI Analysis feature is enabled, the news-sentiment signal may override the starting state: a **bearish** score anchors the simulation in the lowest regime (Panic / Capitulation / Bear / Low), and a **bullish** score anchors it in the highest (Breakout / Momentum / Bull / High), reflecting qualitative macro or company-specific context that pure return history cannot capture.
 
 **SVM (RBF) model:**
 
@@ -455,3 +563,9 @@ This project is intended **for educational and research purposes ONLY**.
 Run the app:
 
 [Stock Market Prediction Simulator](https://vyasrsrinivasan-stock-market-prediction-app-coukef.streamlit.app/)
+
+## References
+
+https://www.schwab.com/learn/story/buy-hold-sell-what-analyst-stock-ratings-mean
+
+https://www.troweprice.com/personal-investing/resources/insights/how-monte-carlo-analysis-could-improve-your-retirement-plan.html
