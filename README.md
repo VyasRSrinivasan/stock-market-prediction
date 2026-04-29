@@ -63,9 +63,11 @@ pip --version
 
 An API key is only needed for the optional **AI Analysis** feature. The Markov chain simulation works without one.
 
-**Groq is the default provider and requires no API key** when using the hosted app — a shared key is provided automatically. Simply tick **Generate AI Analysis** and run.
+**No API key is required on the hosted app** — shared keys are configured for all five providers. Simply select a provider, tick **Generate AI Analysis**, and run.
 
-If you are self-hosting or want to use your own quota, the app supports five providers:
+If the shared key for a provider runs low on balance, the app will display a warning and prompt you to enter your own key. You can always paste your own key into the sidebar field to use your own quota — it takes priority over the shared key.
+
+The app supports five providers:
 
 | Provider | Free tier | Where to get a key |
 |---|---|---|
@@ -75,10 +77,10 @@ If you are self-hosting or want to use your own quota, the app supports five pro
 | **Google Gemini** | Yes — limited free tier | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
 | **DeepSeek** | No | [platform.deepseek.com/api-keys](https://platform.deepseek.com/api-keys) |
 
-**How to add your key to the app:**
+**How to use AI Analysis:**
 
-1. In the sidebar under **AI Analysis (optional)**, select your provider from the **Provider** dropdown.
-2. Optionally paste your own API key — leaving the field blank will use the shared app key if one is configured.
+1. In the sidebar under **AI Analysis (optional)**, select a provider from the **Provider** dropdown. The API key field will show **(optional)** when a shared key is available.
+2. Leave the key field blank to use the shared app key, or paste your own key to use your own quota.
 3. Tick **Generate AI Analysis** and click **Run Simulation**.
 
 The AI Analysis makes two API calls per run — one for sentiment classification and one for the full analysis — so costs are minimal regardless of provider.
@@ -95,7 +97,7 @@ GEMINI_API_KEY    = "AIza..."
 DEEPSEEK_API_KEY  = "sk-..."
 ```
 
-> **Security note:** `secrets.toml` is gitignored by default in this repo. Never commit real keys. Users who enter their own key always take priority over the shared key.
+> **Security note:** `secrets.toml` is gitignored by default in this repo. Never commit real keys. If a shared key's balance is exhausted, the app shows a warning and directs the user to enter their own key.
 
 ---
 
@@ -174,8 +176,8 @@ A browser tab will open automatically at `http://localhost:8501`.
 
 The AI Analysis feature is entirely opt-in and does not affect the simulation unless explicitly enabled:
 
-1. Select a provider from the **Provider** dropdown (**Groq (Free)** is the default — no key needed). A colour-coded logo badge for the selected provider is shown above the dropdown.
-2. Optionally paste your own API key — leaving it blank uses the shared app key if configured.
+1. Select a provider from the **Provider** dropdown (**Groq (Free)** is the default). A colour-coded logo badge for the selected provider is shown above the dropdown.
+2. Leave the API key field blank to use the shared app key (the label shows **(optional)** when one is available), or paste your own key to use your own quota.
 3. Tick **Generate AI Analysis**.
 4. Optionally tick **AI-summarize each source article** to generate a one-sentence relevance note for each news article (uses one additional API call).
 5. Click **Run Simulation**.
@@ -184,7 +186,7 @@ When enabled, two things happen before results are shown:
 - **News sentiment classification** — the selected model reads the latest headlines for the ticker and classifies sentiment as bearish (−1), neutral (0), or bullish (+1). A banner explains whether and how the simulation's starting state was adjusted based on this signal.
 - **Full AI analysis** — the model combines the Markov, SVM, and Monte Carlo outputs with recent news to produce a 3–5 paragraph educational summary. A collapsible **Sources** section lists every article used, with clickable links. If source summarization is enabled, each article also shows an AI-generated sentence explaining its relevance to the simulation result.
 
-If the checkbox is left unticked, the simulation runs as a pure Markov chain with no external data or AI calls.
+If the shared key for the selected provider has insufficient balance, a warning banner is shown prompting you to enter your own API key. If the checkbox is left unticked, the simulation runs as a pure Markov chain with no external data or AI calls.
 
 ---
 
@@ -521,7 +523,7 @@ The **AI Analysis** feature is fully opt-in — the simulation runs as a pure Ma
 | **Google Gemini** | `gemini-2.0-flash` | Limited | OpenAI-compatible endpoint (`generativelanguage.googleapis.com`) |
 | **DeepSeek** | `deepseek-chat` | No | OpenAI-compatible endpoint (`api.deepseek.com`) |
 
-**How to enable:** select a provider from the sidebar dropdown (Groq is pre-selected), optionally enter your own API key, tick **Generate AI Analysis**, then click Run Simulation. On the hosted app, Groq works without any key.
+**How to enable:** select a provider from the sidebar dropdown (Groq is pre-selected), optionally enter your own API key (the field is marked **optional** when a shared key exists), tick **Generate AI Analysis**, then click Run Simulation. All providers work without a personal key on the hosted app. If a shared key's balance is exhausted, the app surfaces a warning and prompts the user to supply their own key.
 
 **What happens when enabled:**
 
