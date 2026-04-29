@@ -56,6 +56,7 @@ def _generate_pdf(
     sentiment_data,
     rag_result,
     ai_provider=None,
+    last_price_date=None,
 ):
     try:
         from fpdf import FPDF
@@ -134,16 +135,27 @@ def _generate_pdf(
     high_pct = (sim_high / current_price - 1) * 100
 
     if _charts:
-        days = list(range(len(simulation)))
+        import matplotlib.dates as mdates
+        if last_price_date is not None:
+            _sim_dates = pd.bdate_range(start=last_price_date + pd.Timedelta(days=1), periods=len(simulation))
+            x_vals = _sim_dates
+        else:
+            x_vals = list(range(len(simulation)))
         fig, ax = plt.subplots(figsize=(8, 2.8), facecolor='white')
-        ax.plot(days, simulation.values, color='#1f77b4', linewidth=1.8, zorder=3)
+        ax.plot(x_vals, simulation.values, color='#1f77b4', linewidth=1.8, zorder=3)
         ax.axhline(sim_high, color='#2ca02c', linestyle='--', linewidth=1.2, alpha=0.9,
                    label=f'High  ${sim_high:.2f} ({high_pct:+.1f}%)')
         ax.axhline(sim_low, color='#d62728', linestyle='--', linewidth=1.2, alpha=0.9,
                    label=f'Low  ${sim_low:.2f} ({low_pct:+.1f}%)')
         y_pad = max((sim_high - sim_low) * 0.08, 0.5)
         ax.set_ylim(sim_low - y_pad, sim_high + y_pad)
-        ax.set_xlabel('Day', fontsize=8)
+        if last_price_date is not None:
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=mdates.MO))
+            plt.setp(ax.get_xticklabels(), rotation=30, ha='right', fontsize=7)
+            ax.set_xlabel('Date', fontsize=8)
+        else:
+            ax.set_xlabel('Day', fontsize=8)
         ax.set_ylabel('Price ($)', fontsize=8)
         ax.set_title('Simulated Price Path', fontsize=9, fontweight='bold', pad=4)
         ax.legend(fontsize=7, framealpha=0.6, loc='upper left')
@@ -158,8 +170,13 @@ def _generate_pdf(
     _kv("Simulated End Price", f"${end_price:.2f}  ({delta_pct:+.1f}%)")
     _kv("Simulated High", f"${sim_high:.2f}  ({high_pct:+.1f}%)")
     _kv("Simulated Low", f"${sim_low:.2f}  ({low_pct:+.1f}%)")
-    _kv("Current State", state_labels[current_state])
-    _kv("Most Likely Next State", state_labels[model.most_likely_next_state(current_state)])
+    _cur_regime = _QUANTILE_STATE_NAMES.get(n_states, state_labels)[current_state]
+    _cur_grade, _, _, _cur_meaning = _schwab_rating(current_state, n_states)
+    _kv("Current State", S(f"{state_labels[current_state]}  |  {_cur_regime}  |  {_cur_grade} – {_cur_meaning}"))
+    _nxt_i = model.most_likely_next_state(current_state)
+    _nxt_regime = _QUANTILE_STATE_NAMES.get(n_states, state_labels)[_nxt_i]
+    _nxt_grade, _, _, _nxt_meaning = _schwab_rating(_nxt_i, n_states)
+    _kv("Most Likely Next State", S(f"{state_labels[_nxt_i]}  |  {_nxt_regime}  |  {_nxt_grade} – {_nxt_meaning}"))
     if sentiment_data:
         s_val = sentiment_data["sentiment"]
         s_label = {-1: "Bearish", 0: "Neutral", 1: "Bullish"}.get(s_val, "Unknown")
@@ -188,17 +205,24 @@ def _generate_pdf(
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(PW, 7, "State Definitions", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 8)
-    hdr = ["State", "Return Range", "Mean Return", "Observations"]
-    col_ws = [25, 65, 50, 50]
+    _sd_names = _QUANTILE_STATE_NAMES.get(n_states, state_labels)
+    hdr      = ["State", "Regime",  "Grade", "Return Range",              "Mean Ret", "Obs"]
+    col_ws   = [20,       42,        14,      52,                          30,          32]
     for h, w in zip(hdr, col_ws):
+        pdf.set_font("Helvetica", "B", 7)
         pdf.cell(w, 6, h, border=1, align="C")
     pdf.ln()
+    pdf.set_font("Helvetica", "", 7)
     for i in range(n_states):
+        _grade, _, _, _meaning = _schwab_rating(i, n_states)
         pdf.cell(col_ws[0], 6, S(state_labels[i]), border=1)
-        pdf.cell(col_ws[1], 6, f"{model.state_bins[i]:.4f}  ->  {model.state_bins[i+1]:.4f}", border=1, align="C")
-        pdf.cell(col_ws[2], 6, f"{model.state_mean_returns[i]:.5f}", border=1, align="C")
-        pdf.cell(col_ws[3], 6, str(int(model.initial_state_counts[i])), border=1, align="C")
+        pdf.cell(col_ws[1], 6, S(_sd_names[i]), border=1)
+        pdf.cell(col_ws[2], 6, _grade, border=1, align="C")
+        pdf.cell(col_ws[3], 6, f"{model.state_bins[i]:.4f} -> {model.state_bins[i+1]:.4f}", border=1, align="C")
+        pdf.cell(col_ws[4], 6, f"{model.state_mean_returns[i]:.5f}", border=1, align="C")
+        pdf.cell(col_ws[5], 6, str(int(model.initial_state_counts[i])), border=1, align="C")
         pdf.ln()
+    pdf.set_font("Helvetica", "", 8)
 
     pdf.ln(4)
 
@@ -211,14 +235,25 @@ def _generate_pdf(
         top_idx = int(svm_probs.argmax())
 
         if _charts:
-            svm_days = list(range(len(svm_simulation)))
+            import matplotlib.dates as mdates
+            if last_price_date is not None:
+                _svm_dates = pd.bdate_range(start=last_price_date + pd.Timedelta(days=1), periods=len(svm_simulation))
+                svm_x = _svm_dates
+            else:
+                svm_x = list(range(len(svm_simulation)))
             fig, ax = plt.subplots(figsize=(8, 2.8), facecolor='white')
-            ax.plot(svm_days, svm_simulation.values, color='#ff7f0e', linewidth=1.8, zorder=3)
+            ax.plot(svm_x, svm_simulation.values, color='#ff7f0e', linewidth=1.8, zorder=3)
             s_lo = float(svm_simulation.min())
             s_hi = float(svm_simulation.max())
             y_pad = max((s_hi - s_lo) * 0.08, 0.5)
             ax.set_ylim(s_lo - y_pad, s_hi + y_pad)
-            ax.set_xlabel('Day', fontsize=8)
+            if last_price_date is not None:
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+                ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=mdates.MO))
+                plt.setp(ax.get_xticklabels(), rotation=30, ha='right', fontsize=7)
+                ax.set_xlabel('Date', fontsize=8)
+            else:
+                ax.set_xlabel('Day', fontsize=8)
             ax.set_ylabel('Price ($)', fontsize=8)
             ax.set_title('SVM Simulated Price Path', fontsize=9, fontweight='bold', pad=4)
             ax.tick_params(labelsize=7)
@@ -229,7 +264,13 @@ def _generate_pdf(
             _embed_chart(fig)
 
         _kv("SVM End Price", f"${svm_end:.2f}  ({svm_delta_pct:+.1f}%)")
-        _kv("Most Likely Next State", S(f"{state_labels[top_idx]} ({svm_probs[top_idx]*100:.1f}%)"))
+        _svm_names = _QUANTILE_STATE_NAMES.get(n_states, state_labels)
+        _svm_regime = _svm_names[top_idx]
+        _svm_grade, _, _, _svm_meaning = _schwab_rating(top_idx, n_states)
+        _kv("Most Likely Next State", S(
+            f"{state_labels[top_idx]}  |  {_svm_regime}  |  {_svm_grade} – {_svm_meaning}"
+            f"  ({svm_probs[top_idx]*100:.1f}%)"
+        ))
         pdf.ln(2)
 
         if _charts:
@@ -309,6 +350,7 @@ def _generate_pdf(
                 "OpenAI":             ( 16,  16,  16),  # near-black
                 "Google Gemini":      ( 66, 133, 244),  # #4285F4 Google blue
                 "DeepSeek":           ( 26, 111, 224),  # #1A6FE0 deep blue
+                "Groq (Free)":        (107,  33, 168),  # #6B21A8 purple
             }
             _br, _bg, _bb = _badge_colors.get(ai_provider, (80, 80, 80))
 
@@ -369,6 +411,80 @@ def _generate_pdf(
     )
 
     return bytes(pdf.output())
+
+
+# ── State nomenclature ────────────────────────────────────────────────────────
+_QUANTILE_STATE_NAMES = {
+    3:  ["Bear", "Neutral", "Bull"],
+    4:  ["Drawdown", "Correction", "Recovery", "Breakout"],
+    5:  ["Capitulation", "Distribution", "Consolidation", "Accumulation", "Momentum"],
+    6:  ["Capitulation", "Distribution", "Drift Down", "Drift Up", "Accumulation", "Momentum"],
+    7:  ["Panic", "Capitulation", "Distribution", "Consolidation", "Accumulation", "Rally", "Breakout"],
+    8:  ["Panic", "Capitulation", "Distribution", "Drift Down", "Drift Up", "Accumulation", "Rally", "Breakout"],
+    9:  ["Panic", "Capitulation", "Distribution", "Mild Distribution", "Consolidation", "Mild Accumulation", "Accumulation", "Rally", "Breakout"],
+    10: ["Panic", "Capitulation", "Distribution", "Mild Distribution", "Drift Down", "Drift Up", "Mild Accumulation", "Accumulation", "Rally", "Breakout"],
+}
+
+_STATE_DESCRIPTIONS = {
+    "Panic":              ("🔴", "Extreme selloff, forced liquidation, flash-crash behavior."),
+    "Capitulation":       ("🔴", "Heavy drawdown, persistent selling, fear-driven decline."),
+    "Distribution":       ("🟠", "Moderate selling pressure, profit-taking, supply overhang."),
+    "Mild Distribution":  ("🟠", "Soft tape, mild below-median weakness."),
+    "Drift Down":         ("🟡", "Slightly below-median returns, tentative selling."),
+    "Correction":         ("🟠", "Notable decline, below-median returns, softening conviction."),
+    "Drawdown":           ("🔴", "Significant decline, elevated selling, negative momentum."),
+    "Neutral":            ("⚪", "Balanced order flow, range-bound, no directional conviction."),
+    "Consolidation":      ("⚪", "Equilibrium between buyers and sellers, sideways tape."),
+    "Drift Up":           ("🟡", "Slightly above-median returns, tentative buying."),
+    "Mild Accumulation":  ("🟢", "Constructive early buying, improving sentiment."),
+    "Recovery":           ("🟢", "Above-median returns, constructive tape, early accumulation."),
+    "Accumulation":       ("🟢", "Institutional buying, improving breadth, positive conviction."),
+    "Rally":              ("🟢", "Strong positive momentum, healthy upside continuation."),
+    "Bull":               ("🟢", "Positive momentum, accumulation, or trend-continuation."),
+    "Momentum":           ("🟢", "Strong upside, bullish catalyst, breakout from prior range."),
+    "Breakout":           ("🟢", "Explosive gain, catalyst-driven surge, high-conviction upside."),
+    # Volume states
+    "Low":                ("🔴", "Return meaningfully below historical average — bearish regime."),
+    "Average":            ("⚪", "Return within ½ std-dev of historical mean — neutral, transitional."),
+    "High":               ("🟢", "Return materially above historical average — bullish regime."),
+}
+
+# Schwab-style A–F ratings by state count (State 0 = F, top state = A)
+# Format per entry: (label, badge background, text color, meaning)
+_SCHWAB_GRADE_MAP = {
+    "A":  ("#14532d", "#ffffff", "Strongly Outperform"),
+    "A-": ("#15803d", "#ffffff", "Outperform+"),
+    "B":  ("#15803d", "#ffffff", "Outperform"),
+    "B-": ("#166534", "#ffffff", "Outperform–"),
+    "C+": ("#6b7280", "#ffffff", "Market Perform+"),
+    "C":  ("#6b7280", "#ffffff", "Market Perform"),
+    "C-": ("#78716c", "#ffffff", "Market Perform–"),
+    "D+": ("#b45309", "#ffffff", "Underperform+"),
+    "D":  ("#c2410c", "#ffffff", "Underperform"),
+    "D-": ("#b91c1c", "#ffffff", "Underperform–"),
+    "F":  ("#7f1d1d", "#ffffff", "Strongly Underperform"),
+}
+
+_SCHWAB_RATINGS_BY_COUNT = {
+    3:  ["F",  "C",  "A"],
+    4:  ["F",  "D",  "B",  "A"],
+    5:  ["F",  "D",  "C",  "B",  "A"],
+    6:  ["F",  "D",  "C-", "C+", "B",  "A"],
+    7:  ["F",  "D-", "D",  "C",  "B",  "A-", "A"],
+    8:  ["F",  "D-", "D",  "C-", "C+", "B",  "A-", "A"],
+    9:  ["F",  "D-", "D",  "D+", "C",  "B-", "B",  "A-", "A"],
+    10: ["F",  "D-", "D",  "D+", "C-", "C+", "B-", "B",  "A-", "A"],
+}
+
+def _schwab_rating(state_idx: int, total_states: int):
+    """Return (grade, bg_color, text_color, meaning) for the given state index."""
+    grades = _SCHWAB_RATINGS_BY_COUNT.get(total_states)
+    if grades is None:
+        # fallback: linearly map to F…A
+        grades = list(_SCHWAB_RATINGS_BY_COUNT[5])
+    grade = grades[min(state_idx, len(grades) - 1)]
+    bg, fg, meaning = _SCHWAB_GRADE_MAP.get(grade, ("#6b7280", "#ffffff", "Market Perform"))
+    return grade, bg, fg, meaning
 
 
 st.set_page_config(page_title="Stock Predictor", layout="centered")
@@ -602,10 +718,19 @@ with st.sidebar:
             ),
             "label": "DeepSeek",
         },
+        "Groq (Free)": {
+            "bg": "#F5F0FF", "border": "#6B21A8", "text": "#6B21A8",
+            "icon": (
+                '<svg width="18" height="18" viewBox="0 0 24 24" fill="#6B21A8" xmlns="http://www.w3.org/2000/svg">'
+                '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>'
+                '</svg>'
+            ),
+            "label": "Groq (Free)",
+        },
     }
 
-    _active = st.session_state.get("_ai_provider_select", "Anthropic (Claude)")
-    _badge = _provider_badges.get(_active, _provider_badges["Anthropic (Claude)"])
+    _active = st.session_state.get("_ai_provider_select", "Groq (Free)")
+    _badge = _provider_badges.get(_active, _provider_badges["Groq (Free)"])
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;'
         f'background:{_badge["bg"]};border:1.5px solid {_badge["border"]}40;'
@@ -619,34 +744,56 @@ with st.sidebar:
 
     ai_provider = st.selectbox(
         "Provider",
-        options=["Anthropic (Claude)", "OpenAI", "Google Gemini", "DeepSeek"],
+        options=["Groq (Free)", "Anthropic (Claude)", "OpenAI", "Google Gemini", "DeepSeek"],
         index=0,
         key="_ai_provider_select",
-        help="Choose which AI provider powers the news analysis.",
+        help="Choose which AI provider powers the news analysis. Groq is free — no API key needed.",
     )
     _provider_slug_map = {
         "Anthropic (Claude)": "anthropic",
         "OpenAI": "openai",
         "Google Gemini": "gemini",
         "DeepSeek": "deepseek",
+        "Groq (Free)": "groq",
+    }
+    _secret_key_map = {
+        "Anthropic (Claude)": "ANTHROPIC_API_KEY",
+        "OpenAI": "OPENAI_API_KEY",
+        "Google Gemini": "GEMINI_API_KEY",
+        "DeepSeek": "DEEPSEEK_API_KEY",
+        "Groq (Free)": "GROQ_API_KEY",
     }
     _api_key_labels = {
         "Anthropic (Claude)": "Anthropic API Key",
         "OpenAI": "OpenAI API Key",
         "Google Gemini": "Google AI API Key",
         "DeepSeek": "DeepSeek API Key",
+        "Groq (Free)": "Groq API Key (optional — a shared key is provided)",
     }
     provider_slug = _provider_slug_map[ai_provider]
-    ai_api_key = st.text_input(
+    _secret_name = _secret_key_map[ai_provider]
+    _secret_key = st.secrets.get(_secret_name, "") if hasattr(st, "secrets") else ""
+    _has_secret = bool(_secret_key)
+
+    ai_api_key_input = st.text_input(
         _api_key_labels[ai_provider],
         type="password",
-        help="Paste your API key to enable AI-powered news analysis. Leave blank to skip.",
+        help=(
+            "Leave blank to use the shared key provided by this app."
+            if _has_secret else
+            "Paste your API key to enable AI-powered news analysis. Leave blank to skip."
+        ),
     )
+    ai_api_key = ai_api_key_input or _secret_key
+
+    if _has_secret and not ai_api_key_input:
+        st.caption("Using shared app key. Enter your own key to use your quota.")
+
     run_rag = st.checkbox(
         "Generate AI Analysis",
         value=False,
         disabled=not ai_api_key,
-        help="Uses your chosen AI provider + recent news to contextualise the simulation. Requires an API key.",
+        help="Uses your chosen AI provider + recent news to contextualise the simulation.",
     )
     summarize_sources = st.checkbox(
         "AI-summarize each source article",
@@ -728,7 +875,7 @@ simulation = model.simulate_prices(
 )
 
 # ── Results ───────────────────────────────────────────────────────────────────
-st.success(f"Model fitted on **{len(prices)}** trading days of **{ticker}** data.")
+st.success(f"Model fitted on **{len(prices)}** trading days of **{ticker}** data — as of **{datetime.date.today().strftime('%B %d, %Y')}**.")
 
 if sentiment_data:
     s = sentiment_data["sentiment"]
@@ -759,8 +906,9 @@ if sentiment_data:
 st.subheader("Simulated Price Path")
 sim_high = float(simulation.max())
 sim_low = float(simulation.min())
+_sim_dates = pd.bdate_range(start=prices.index[-1] + pd.Timedelta(days=1), periods=len(simulation))
 sim_df = pd.DataFrame({
-    "Day": range(len(simulation)),
+    "Date": _sim_dates.strftime("%b %d"),
     "Price": simulation.values,
 })
 y_min = sim_low * 0.99
@@ -770,7 +918,7 @@ line = (
     alt.Chart(sim_df)
     .mark_line(color="#1f77b4")
     .encode(
-        x=alt.X("Day:Q", axis=alt.Axis(tickMinStep=1)),
+        x=alt.X("Date:O", sort=None, axis=alt.Axis(labelAngle=-45)),
         y=alt.Y("Price:Q", scale=alt.Scale(domain=[y_min, y_max])),
     )
 )
@@ -817,9 +965,31 @@ st.divider()
 
 # Current state info
 st.subheader("Current Market State")
+_name_lookup = _QUANTILE_STATE_NAMES.get(n_states, state_labels)
+
+def _state_badge_html(state_idx: int, regime_name: str, total: int) -> str:
+    dot, desc = _STATE_DESCRIPTIONS.get(regime_name, ("⚪", ""))
+    grade, bg, fg, meaning = _schwab_rating(state_idx, total)
+    return (
+        f'<div style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+        f'<span style="font-size:0.9rem;font-weight:600;color:#00509d;">{dot} {regime_name}</span>'
+        f'<span style="font-size:0.82rem;font-weight:800;padding:2px 10px;border-radius:4px;'
+        f'background:{bg};color:{fg};letter-spacing:0.04em;">{grade}</span>'
+        f'<span style="font-size:0.78rem;color:#555;">{meaning}</span>'
+        f'</div>'
+        f'<div style="font-size:0.78rem;color:#555;margin-top:2px;">{desc}</div>'
+    )
+
 col_a, col_b = st.columns(2)
-col_a.metric("Current State", state_labels[current_state])
-col_b.metric("Most Likely Next State", state_labels[model.most_likely_next_state(current_state)])
+with col_a:
+    _cur_name = _name_lookup[current_state]
+    st.metric("Current State", state_labels[current_state])
+    st.markdown(_state_badge_html(current_state, _cur_name, n_states), unsafe_allow_html=True)
+with col_b:
+    _nxt_idx = model.most_likely_next_state(current_state)
+    _nxt_name = _name_lookup[_nxt_idx]
+    st.metric("Most Likely Next State", state_labels[_nxt_idx])
+    st.markdown(_state_badge_html(_nxt_idx, _nxt_name, n_states), unsafe_allow_html=True)
 st.caption(f"Current state mean return: `{model.state_mean_returns[current_state]:.5f}`")
 
 st.divider()
@@ -841,13 +1011,44 @@ st.subheader("State Definitions")
 st.caption("Each state covers a range of daily returns, split by quantile.")
 state_rows = []
 for i in range(n_states):
+    _rname = _name_lookup[i]
+    _grade, _, _, _meaning = _schwab_rating(i, n_states)
     state_rows.append({
         "State": state_labels[i],
+        "Regime": _rname,
+        "Grade": _grade,
+        "Rating": _meaning,
         "Return Range": f"{model.state_bins[i]:.4f}  →  {model.state_bins[i + 1]:.4f}",
         "Mean Return": f"{model.state_mean_returns[i]:.5f}",
         "Observations": int(model.initial_state_counts[i]),
     })
 st.dataframe(pd.DataFrame(state_rows).set_index("State"), width="stretch")
+
+with st.expander("What do these states mean?"):
+    st.caption(
+        "Each state represents a **daily return regime** observed in this stock's price history. "
+        "States are ordered from most bearish (State 0) to most bullish (State N). "
+        "The colour dot gives an at-a-glance directional signal."
+    )
+    _name_list = _QUANTILE_STATE_NAMES.get(n_states)
+    for i, label in enumerate(state_labels):
+        regime_name = _name_list[i] if _name_list else label
+        dot, desc = _STATE_DESCRIPTIONS.get(regime_name, ("⚪", "Custom state."))
+        grade, bg, fg, meaning = _schwab_rating(i, n_states)
+        st.markdown(
+            f'<div style="display:flex;align-items:flex-start;gap:10px;margin:6px 0;">'
+            f'<span style="font-size:1.1rem;line-height:1.5;">{dot}</span>'
+            f'<div>'
+            f'<span style="font-weight:600;color:#00296b;">{label}</span>'
+            f'<span style="color:#00509d;font-size:0.88rem;font-weight:500;"> — {regime_name}</span>'
+            f'&nbsp;<span style="font-size:0.78rem;font-weight:800;padding:1px 9px;border-radius:4px;'
+            f'background:{bg};color:{fg};letter-spacing:0.04em;">{grade}</span>'
+            f'&nbsp;<span style="color:#555;font-size:0.80rem;">{meaning}</span>'
+            f'<br><span style="color:#666;font-size:0.82rem;">{desc}</span>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 st.divider()
 
@@ -881,8 +1082,9 @@ with st.spinner("Training SVM model..."):
         )
 
         # Price path chart
+        _svm_dates = pd.bdate_range(start=prices.index[-1] + pd.Timedelta(days=1), periods=len(svm_simulation))
         svm_sim_df = pd.DataFrame({
-            "Day": range(len(svm_simulation)),
+            "Date": _svm_dates.strftime("%b %d"),
             "Price": svm_simulation.values,
         })
         svm_y_min = float(svm_simulation.min()) * 0.99
@@ -891,7 +1093,7 @@ with st.spinner("Training SVM model..."):
             alt.Chart(svm_sim_df)
             .mark_line(color="#ff7f0e")
             .encode(
-                x=alt.X("Day:Q", axis=alt.Axis(tickMinStep=1)),
+                x=alt.X("Date:O", sort=None, axis=alt.Axis(labelAngle=-45)),
                 y=alt.Y("Price:Q", scale=alt.Scale(domain=[svm_y_min, svm_y_max])),
             )
             .properties(width="container")
@@ -931,9 +1133,17 @@ with st.spinner("Training SVM model..."):
             .properties(width="container")
         )
         st.altair_chart(prob_chart, use_container_width=True)
-        st.caption(
-            f"Most likely next state: **{state_labels[top_idx]}** "
-            f"({svm_probs[top_idx] * 100:.1f}%)"
+        _svm_top_name = _name_lookup[top_idx]
+        _svm_dot, _ = _STATE_DESCRIPTIONS.get(_svm_top_name, ("⚪", ""))
+        _svm_grade, _svm_bg, _svm_fg, _svm_meaning = _schwab_rating(top_idx, n_states)
+        st.markdown(
+            f'Most likely next state: **{state_labels[top_idx]}** — '
+            f'{_svm_dot} {_svm_top_name} '
+            f'<span style="font-size:0.78rem;font-weight:800;padding:1px 9px;border-radius:4px;'
+            f'background:{_svm_bg};color:{_svm_fg};letter-spacing:0.04em;">{_svm_grade}</span> '
+            f'<span style="font-size:0.80rem;color:#555;">{_svm_meaning}</span> '
+            f'({svm_probs[top_idx] * 100:.1f}%)',
+            unsafe_allow_html=True,
         )
 
     except ImportError:
@@ -1110,6 +1320,7 @@ try:
         sentiment_data=sentiment_data,
         rag_result=rag_result,
         ai_provider=ai_provider if rag_result else None,
+        last_price_date=prices.index[-1],
     )
     st.download_button(
         label="Download PDF Report",
