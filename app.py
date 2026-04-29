@@ -26,9 +26,11 @@ except ImportError:
 
 try:
     from markov import get_news_sentiment, run_rag_analysis
+    from markov.rag import InsufficientBalanceError
     _rag_importable = True
 except ImportError:
     _rag_importable = False
+    InsufficientBalanceError = Exception  # fallback so except clauses still compile
 
 def _pdf_safe(text: str) -> str:
     """Replace Unicode characters outside Latin-1 with ASCII equivalents."""
@@ -747,7 +749,7 @@ with st.sidebar:
         options=["Groq (Free)", "Anthropic (Claude)", "OpenAI", "Google Gemini", "DeepSeek"],
         index=0,
         key="_ai_provider_select",
-        help="Choose which AI provider powers the news analysis. Groq is free — no API key needed.",
+        help="Choose which AI provider powers the news analysis. No API key required — shared keys are provided for all providers.",
     )
     _provider_slug_map = {
         "Anthropic (Claude)": "anthropic",
@@ -768,7 +770,7 @@ with st.sidebar:
         "OpenAI": "OpenAI API Key",
         "Google Gemini": "Google AI API Key",
         "DeepSeek": "DeepSeek API Key",
-        "Groq (Free)": "Groq API Key (optional — a shared key is provided)",
+        "Groq (Free)": "Groq API Key",
     }
     provider_slug = _provider_slug_map[ai_provider]
     _secret_name = _secret_key_map[ai_provider]
@@ -776,12 +778,12 @@ with st.sidebar:
     _has_secret = bool(_secret_key)
 
     ai_api_key_input = st.text_input(
-        _api_key_labels[ai_provider],
+        _api_key_labels[ai_provider] + (" (optional)" if _has_secret else ""),
         type="password",
         help=(
-            "Leave blank to use the shared key provided by this app."
+            "Leave blank to use the shared key provided by this app. Enter your own key to use your own quota."
             if _has_secret else
-            "Paste your API key to enable AI-powered news analysis. Leave blank to skip."
+            "Paste your API key to enable AI-powered news analysis."
         ),
     )
     ai_api_key = ai_api_key_input or _secret_key
@@ -864,6 +866,14 @@ if run_rag and ai_api_key:
             elif s == 1:
                 sim_start_state = n_states - 1
             # s == 0: keep current_state
+        except InsufficientBalanceError:
+            st.warning(
+                f"The shared **{ai_provider}** key has insufficient balance. "
+                "Please enter your own API key in the sidebar to use AI Analysis.",
+                icon="💳",
+            )
+            sentiment_data = None
+            run_rag = False
         except Exception:
             sentiment_data = None  # fall back silently
 
@@ -1291,11 +1301,17 @@ if run_rag and ai_api_key:
                 f"Missing dependency: {e}. "
                 "Install with: `pip install anthropic chromadb sentence-transformers`"
             )
+        except InsufficientBalanceError:
+            st.warning(
+                f"The shared **{ai_provider}** key has insufficient balance. "
+                "Please enter your own API key in the sidebar to use AI Analysis.",
+                icon="💳",
+            )
         except Exception as e:
             st.error(f"AI analysis failed: {e}")
     st.divider()
 elif run_rag and not ai_api_key:
-    st.info("Enter your Anthropic API key in the sidebar to enable AI analysis.")
+    st.info("Enter your API key in the sidebar to enable AI analysis.")
     st.divider()
 
 # ── PDF Download ──────────────────────────────────────────────────────────────
