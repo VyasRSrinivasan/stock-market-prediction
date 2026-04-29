@@ -35,6 +35,19 @@ _SYSTEM_PROMPT = (
 )
 
 
+class InsufficientBalanceError(Exception):
+    """Raised when a provider rejects the request due to billing/quota limits."""
+
+
+def _is_balance_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(k in msg for k in (
+        "insufficient_quota", "insufficient balance", "billing",
+        "quota exceeded", "rate limit", "payment required",
+        "you exceeded", "credit", "funds", "429",
+    ))
+
+
 # ── News fetching ─────────────────────────────────────────────────────────────
 
 def fetch_news(ticker: str, max_articles: int = 20) -> list[dict[str, str]]:
@@ -104,13 +117,18 @@ def _sentiment_anthropic(api_key: str, prompt: str) -> dict:
         raise ImportError("Install the anthropic package: pip install anthropic") from exc
 
     client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=_PROVIDER_CONFIG["anthropic"]["model"],
-        max_tokens=256,
-        tools=[_SENTIMENT_TOOL_ANTHROPIC],
-        tool_choice={"type": "tool", "name": "report_sentiment"},
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        response = client.messages.create(
+            model=_PROVIDER_CONFIG["anthropic"]["model"],
+            max_tokens=256,
+            tools=[_SENTIMENT_TOOL_ANTHROPIC],
+            tool_choice={"type": "tool", "name": "report_sentiment"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as exc:
+        if _is_balance_error(exc):
+            raise InsufficientBalanceError(str(exc)) from exc
+        raise
     for block in response.content:
         if block.type == "tool_use" and block.name == "report_sentiment":
             return {
@@ -136,12 +154,17 @@ def _sentiment_openai_compat(api_key: str, prompt: str, provider: str) -> dict:
         prompt
         + '\n\nRespond with JSON only, no other text: {"sentiment": <integer -1, 0, or 1>, "reasoning": "<one or two sentences>"}'
     )
-    response = client.chat.completions.create(
-        model=cfg["model"],
-        messages=[{"role": "user", "content": full_prompt}],
-        max_tokens=256,
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = client.chat.completions.create(
+            model=cfg["model"],
+            messages=[{"role": "user", "content": full_prompt}],
+            max_tokens=256,
+            response_format={"type": "json_object"},
+        )
+    except Exception as exc:
+        if _is_balance_error(exc):
+            raise InsufficientBalanceError(str(exc)) from exc
+        raise
     raw = response.choices[0].message.content or "{}"
     data = json.loads(raw)
     return {
@@ -157,19 +180,24 @@ def _analysis_anthropic(api_key: str, prompt: str) -> str:
         raise ImportError("Install the anthropic package: pip install anthropic") from exc
 
     client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=_PROVIDER_CONFIG["anthropic"]["model"],
-        max_tokens=1024,
-        thinking={"type": "adaptive"},
-        system=[
-            {
-                "type": "text",
-                "text": _SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        response = client.messages.create(
+            model=_PROVIDER_CONFIG["anthropic"]["model"],
+            max_tokens=1024,
+            thinking={"type": "adaptive"},
+            system=[
+                {
+                    "type": "text",
+                    "text": _SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as exc:
+        if _is_balance_error(exc):
+            raise InsufficientBalanceError(str(exc)) from exc
+        raise
     text_parts = [block.text for block in response.content if block.type == "text"]
     return "\n\n".join(text_parts).strip()
 
@@ -186,14 +214,19 @@ def _analysis_openai_compat(api_key: str, prompt: str, provider: str) -> str:
         kwargs["base_url"] = cfg["base_url"]
     client = openai.OpenAI(**kwargs)
 
-    response = client.chat.completions.create(
-        model=cfg["model"],
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=1024,
-    )
+    try:
+        response = client.chat.completions.create(
+            model=cfg["model"],
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=1024,
+        )
+    except Exception as exc:
+        if _is_balance_error(exc):
+            raise InsufficientBalanceError(str(exc)) from exc
+        raise
     return (response.choices[0].message.content or "").strip()
 
 
