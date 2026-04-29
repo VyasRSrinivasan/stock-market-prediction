@@ -874,8 +874,17 @@ if run_rag and ai_api_key:
             )
             sentiment_data = None
             run_rag = False
-        except Exception:
-            sentiment_data = None  # fall back silently
+        except Exception as _sent_err:
+            # Surface the error so quota/auth issues aren't silently swallowed
+            _sent_msg = str(_sent_err).lower()
+            if any(k in _sent_msg for k in ("402", "429", "quota", "balance", "billing", "rate", "credit")):
+                st.warning(
+                    f"The shared **{ai_provider}** key has insufficient balance. "
+                    "Please enter your own API key in the sidebar to use AI Analysis.",
+                    icon="💳",
+                )
+                run_rag = False
+            sentiment_data = None
 
 simulation = model.simulate_prices(
     start_price=float(prices.iloc[-1]),
@@ -1308,7 +1317,18 @@ if run_rag and ai_api_key:
                 icon="💳",
             )
         except Exception as e:
-            st.error(f"AI analysis failed: {e}")
+            _err_msg = str(e).lower()
+            _status = getattr(e, "status_code", None) or getattr(e, "status", None)
+            if _status in (402, 429) or any(k in _err_msg for k in (
+                "402", "429", "quota", "balance", "billing", "rate", "credit"
+            )):
+                st.warning(
+                    f"The shared **{ai_provider}** key has insufficient balance. "
+                    "Please enter your own API key in the sidebar to use AI Analysis.",
+                    icon="💳",
+                )
+            else:
+                st.error(f"AI analysis failed: {e}")
     st.divider()
 elif run_rag and not ai_api_key:
     st.info("Enter your API key in the sidebar to enable AI analysis.")

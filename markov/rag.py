@@ -40,11 +40,20 @@ class InsufficientBalanceError(Exception):
 
 
 def _is_balance_error(exc: Exception) -> bool:
+    # HTTP status codes: 402 Payment Required, 429 Too Many Requests / quota
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status in (402, 429):
+        return True
+    # SDK exception class names (e.g. openai.RateLimitError, anthropic.APIStatusError)
+    type_name = type(exc).__name__.lower()
+    if any(k in type_name for k in ("ratelimit", "quota", "billing", "payment", "insufficient")):
+        return True
+    # Fall back to message string scan
     msg = str(exc).lower()
     return any(k in msg for k in (
-        "insufficient_quota", "insufficient balance", "billing",
-        "quota exceeded", "rate limit", "payment required",
-        "you exceeded", "credit", "funds", "429",
+        "insufficient_quota", "insufficient_balance", "insufficient balance",
+        "billing", "quota exceeded", "rate limit", "rate_limit",
+        "payment required", "you exceeded", "credit", "funds", "402", "429",
     ))
 
 
